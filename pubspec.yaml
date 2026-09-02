@@ -1,0 +1,47 @@
+name: pw
+description: A mobile app with journal, journey tracking, and user profile - Android & iOS.
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.2
+  # Backend integration: REST client + token/base-url persistence.
+  http: ^1.2.0
+  shared_preferences: ^2.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^2.0.0
+  # Fake http.Client for service tests that must not touch the network.
+  http_parser: ^4.0.0
+  # Used only by tool/build_atlases.dart, which runs on the desktop. Keeping it
+  # out of dependencies keeps it out of the shipped app.
+  image: ^4.0.0
+
+flutter:
+  uses-material-design: true
+
+  # Only the built sprite sheets ship. The raw per-frame renders under
+  # assets/journey/pet/** and assets/journey/backgrounds/** stay in the repo as
+  # the source art but are deliberately NOT listed here: bundling them put
+  # ~1.2 GB of PNGs in the app. Rebuild the sheets after changing the art with:
+  #
+  #     dart run tool/build_atlases.dart
+  assets:
+    - assets/journey/atlas/
+    - assets/journey/atlas/parallax/
+
+  # Uncomment to add fonts
+  # fonts:
+  #   - family: Roboto
+  #     fonts:
+  #       - asset: assets/fonts/Roboto-Regular.ttf
+  #       - asset: assets/fonts/Roboto-Bold.ttf
+  #         weight: 700

@@ -1,0 +1,18 @@
+{
+  "name": "pw-backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "PW habit-tracking backend. Zero npm dependencies - Node builtins only.",
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node --test test/*.test.js",
+    "seed": "node src/seed.js",
+    "test-account": "node src/make_test_account.js",
+    "purge": "node src/purge_test_users.js"
+  }
+}

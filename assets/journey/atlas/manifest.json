@@ -1,0 +1,129 @@
+{
+  "version": 1,
+  "animations": {
+    "walk": {
+      "name": "walk",
+      "sheet": "walk.png",
+      "frameCount": 21,
+      "cols": 3,
+      "rows": 7,
+      "frameWidth": 448,
+      "frameHeight": 241,
+      "padding": 2,
+      "fps": 24,
+      "sourceWidth": 1920,
+      "sourceHeight": 1080,
+      "cropX": 74,
+      "cropY": 104,
+      "cropWidth": 1703,
+      "cropHeight": 915
+    },
+    "idle": {
+      "name": "idle",
+      "sheet": "idle.png",
+      "frameCount": 28,
+      "cols": 4,
+      "rows": 7,
+      "frameWidth": 448,
+      "frameHeight": 286,
+      "padding": 2,
+      "fps": 8,
+      "sourceWidth": 1920,
+      "sourceHeight": 1080,
+      "cropX": 0,
+      "cropY": 0,
+      "cropWidth": 1585,
+      "cropHeight": 1011
+    },
+    "exercise": {
+      "name": "exercise",
+      "sheet": "exercise.png",
+      "frameCount": 30,
+      "cols": 5,
+      "rows": 6,
+      "frameWidth": 407,
+      "frameHeight": 282,
+      "padding": 2,
+      "fps": 8,
+      "sourceWidth": 1280,
+      "sourceHeight": 720,
+      "cropX": 148,
+      "cropY": 2,
+      "cropWidth": 1037,
+      "cropHeight": 718
+    },
+    "meditation": {
+      "name": "meditation",
+      "sheet": "meditation.png",
+      "frameCount": 30,
+      "cols": 4,
+      "rows": 8,
+      "frameWidth": 407,
+      "frameHeight": 254,
+      "padding": 2,
+      "fps": 8,
+      "sourceWidth": 1280,
+      "sourceHeight": 720,
+      "cropX": 130,
+      "cropY": 18,
+      "cropWidth": 1055,
+      "cropHeight": 659
+    },
+    "reading": {
+      "name": "reading",
+      "sheet": "reading.png",
+      "frameCount": 30,
+      "cols": 5,
+      "rows": 6,
+      "frameWidth": 407,
+      "frameHeight": 263,
+      "padding": 2,
+      "fps": 8,
+      "sourceWidth": 1280,
+      "sourceHeight": 720,
+      "cropX": 282,
+      "cropY": 76,
+      "cropWidth": 998,
+      "cropHeight": 644
+    },
+    "drinking_water": {
+      "name": "drinking_water",
+      "sheet": "drinking_water.png",
+      "frameCount": 30,
+      "cols": 5,
+      "rows": 6,
+      "frameWidth": 403,
+      "frameHeight": 339,
+      "padding": 2,
+      "fps": 8,
+      "sourceWidth": 1280,
+      "sourceHeight": 720,
+      "cropX": 194,
+      "cropY": 52,
+      "cropWidth": 793,
+      "cropHeight": 668
+    }
+  },
+  "parallax": {
+    "sky": {
+      "width": 1024,
+      "height": 546,
+      "file": "parallax/sky.png"
+    },
+    "mid": {
+      "width": 1280,
+      "height": 427,
+      "file": "parallax/mid.png"
+    },
+    "near": {
+      "width": 512,
+      "height": 341,
+      "file": "parallax/near.png"
+    },
+    "ground": {
+      "width": 1280,
+      "height": 427,
+      "file": "parallax/ground.png"
+    }
+  }
+}
