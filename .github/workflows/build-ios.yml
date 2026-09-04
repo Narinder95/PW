@@ -21,22 +21,33 @@ jobs:
       - name: Get dependencies
         run: flutter pub get
 
-      - name: Build iOS
-        run: flutter build ios --release --no-codesign
+      - name: Install fastlane
+        run: |
+          brew install fastlane
+          cd ios && fastlane action_name --version || true
 
-      - name: List build output
-        run: ls -la build/ios/iphoneos/
+      - name: Setup Xcode project
+        run: |
+          cd ios
+          pod install --repo-update
+
+      - name: Build iOS with code signing
+        run: |
+          flutter build ios --release --verbose
+        env:
+          APPLE_ID: narindergautam046@gmail.com
+          APPLE_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
 
       - name: Create IPA
         run: |
-          cd build/ios/Release-iphoneos || cd build/ios/iphoneos
-          mkdir -p Payload
-          cp -r Runner.app Payload/
-          zip -r app.ipa Payload/
-          ls -la app.ipa
+          mkdir -p build/ipa/Payload
+          cp -r build/ios/iphoneos/Runner.app build/ipa/Payload/
+          cd build/ipa
+          zip -r ../app.ipa Payload/
+          ls -la ../app.ipa
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
           name: ios-ipa
-          path: build/ios/*/app.ipa
+          path: build/app.ipa
