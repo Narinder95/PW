@@ -24,15 +24,19 @@ jobs:
       - name: Build iOS
         run: flutter build ios --release --no-codesign
 
+      - name: List build output
+        run: ls -la build/ios/iphoneos/
+
       - name: Create IPA
         run: |
-          cd build/ios/iphoneos
-          mkdir Payload
-          mv Runner.app Payload/
+          cd build/ios/Release-iphoneos || cd build/ios/iphoneos
+          mkdir -p Payload
+          cp -r Runner.app Payload/
           zip -r app.ipa Payload/
+          ls -la app.ipa
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
           name: ios-ipa
-          path: build/ios/iphoneos/app.ipa
+          path: build/ios/*/app.ipa
