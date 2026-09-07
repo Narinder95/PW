@@ -171,6 +171,17 @@ export function parseDate(value, field = 'date') {
   return value;
 }
 
+const MONTH_RE = /^\d{4}-\d{2}$/;
+export function parseMonth(value, field = 'month') {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value !== 'string' || !MONTH_RE.test(value)) {
+    throw ApiError.validation(`${field} must be YYYY-MM`, field);
+  }
+  const month = Number(value.slice(5, 7));
+  if (month < 1 || month > 12) throw ApiError.validation(`${field} is not a real month`, field);
+  return value;
+}
+
 /** limit query param: clamps into [1, max], falls back to `def`. */
 export function parseLimit(raw, def, max) {
   if (raw === undefined || raw === null || raw === '') return def;

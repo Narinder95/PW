@@ -275,6 +275,32 @@ List<bool> asWeekData(Object? value) {
   ]);
 }
 
+/// Coerces [value] to a `List<bool?>`, preserving explicit nulls — used for
+/// tri-state day data (complete / missed / no-data) where collapsing null to
+/// `false` would draw a habit as missed on a day it didn't exist yet.
+/// Non-null, non-bool elements degrade to `false` rather than being dropped,
+/// which would shift every later day's index.
+List<bool?> asTriStateList(Object? value) {
+  if (value is! List) return const <bool?>[];
+  return List<bool?>.unmodifiable(
+    value.map<bool?>((e) => e == null ? null : asBool(e)),
+  );
+}
+
+/// Coerces [value] to a `List<int?>`, preserving explicit nulls — used for
+/// `progressData`, where `null` means "no log row" and must stay distinct
+/// from a real `0` (the user logged zero that day).
+List<int?> asNullableIntList(Object? value) {
+  if (value is! List) return const <int?>[];
+  return List<int?>.unmodifiable(
+    value.map<int?>((e) => e == null ? null : asInt(e)),
+  );
+}
+
+/// Renders a date at month granularity (`YYYY-MM`) for `?month=` parameters.
+String asYearMonth(DateTime value) =>
+    '${value.year.toString().padLeft(4, '0')}-${value.month.toString().padLeft(2, '0')}';
+
 /// Resolves an enum from its wire spelling via [table], falling back to
 /// [fallback] for null, a non-string, or an unrecognised value.
 ///

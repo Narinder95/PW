@@ -2,17 +2,36 @@ import 'package:flutter/material.dart';
 import '../models/habit.dart';
 import '../utils/journal_theme.dart';
 
-class MonthView extends StatefulWidget {
+/// A calendar grid for one month of a habit's completion history.
+///
+/// Purely presentational: the caller owns which month is selected and fetches
+/// its data (`GET /api/habits/month`), passing the result in as
+/// [monthCompletion]. There is no synthetic fallback for a day the server
+/// didn't report on — it renders as "no data", the same as a day before the
+/// habit existed.
+class MonthView extends StatelessWidget {
   final Habit habit;
 
-  const MonthView({Key? key, required this.habit}) : super(key: key);
+  /// First-of-month anchor for the month being displayed.
+  final DateTime month;
 
-  @override
-  State<MonthView> createState() => _MonthViewState();
-}
+  /// `true` (target met), `false` (missed), or `null` (no data) per day of
+  /// [month], oldest first. Null while the month's data hasn't loaded yet.
+  final List<bool?>? monthCompletion;
 
-class _MonthViewState extends State<MonthView> {
-  late DateTime currentMonth;
+  final bool loading;
+  final VoidCallback onPrevMonth;
+  final VoidCallback onNextMonth;
+
+  const MonthView({
+    super.key,
+    required this.habit,
+    required this.month,
+    required this.monthCompletion,
+    required this.loading,
+    required this.onPrevMonth,
+    required this.onNextMonth,
+  });
 
   static const List<String> _weekdayLetters = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 
@@ -31,17 +50,10 @@ class _MonthViewState extends State<MonthView> {
     'December',
   ];
 
-  @override
-  void initState() {
-    super.initState();
+  bool get _canGoToNextMonth {
     final now = DateTime.now();
-    currentMonth = DateTime(now.year, now.month);
-  }
-
-  void _shiftMonth(int delta) {
-    setState(() {
-      currentMonth = DateTime(currentMonth.year, currentMonth.month + delta);
-    });
+    final currentMonth = DateTime(now.year, now.month);
+    return month.isBefore(currentMonth);
   }
 
   @override
@@ -55,7 +67,10 @@ class _MonthViewState extends State<MonthView> {
         const SizedBox(height: 10),
         _buildWeekdayHeader(t),
         const SizedBox(height: 6),
-        _buildMonthGrid(t),
+        if (loading && monthCompletion == null)
+          const _MonthGridSkeleton()
+        else
+          _buildMonthGrid(t),
       ],
     );
   }
@@ -65,27 +80,35 @@ class _MonthViewState extends State<MonthView> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        _buildNavButton(t, Icons.chevron_left_rounded, () => _shiftMonth(-1)),
+        _buildNavButton(t, Icons.chevron_left_rounded, onPrevMonth),
         Text(
-          '${_monthNames[currentMonth.month - 1]} ${currentMonth.year}',
+          '${_monthNames[month.month - 1]} ${month.year}',
           style: TextStyle(
             fontSize: 13,
             fontWeight: FontWeight.w700,
             color: t.textPrimary,
           ),
         ),
-        _buildNavButton(t, Icons.chevron_right_rounded, () => _shiftMonth(1)),
+        _buildNavButton(
+          t,
+          Icons.chevron_right_rounded,
+          _canGoToNextMonth ? onNextMonth : null,
+        ),
       ],
     );
   }
 
-  Widget _buildNavButton(JournalTheme t, IconData icon, VoidCallback onTap) {
+  Widget _buildNavButton(JournalTheme t, IconData icon, VoidCallback? onTap) {
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(16),
       child: Padding(
         padding: const EdgeInsets.all(4),
-        child: Icon(icon, size: 20, color: t.textSecondary),
+        child: Icon(
+          icon,
+          size: 20,
+          color: onTap == null ? t.textMuted.withValues(alpha: 0.3) : t.textSecondary,
+        ),
       ),
     );
   }
@@ -109,11 +132,11 @@ class _MonthViewState extends State<MonthView> {
 
   // -------------------------------------------------------------------- grid
   Widget _buildMonthGrid(JournalTheme t) {
-    final daysInMonth = _daysIn(currentMonth);
+    final daysInMonth = _daysIn(month);
     // DateTime.weekday is 1 = Monday .. 7 = Sunday, matching the Monday-first
     // header above.
-    final leading = DateTime(currentMonth.year, currentMonth.month, 1).weekday - 1;
-    final daysInPrevMonth = _daysIn(DateTime(currentMonth.year, currentMonth.month - 1));
+    final leading = DateTime(month.year, month.month, 1).weekday - 1;
+    final daysInPrevMonth = _daysIn(DateTime(month.year, month.month - 1));
 
     // Pad the tail so the final week is a complete row.
     final used = leading + daysInMonth;
@@ -146,8 +169,8 @@ class _MonthViewState extends State<MonthView> {
     );
   }
 
-  /// A cell with no state to report: an adjacent month, or a day that hasn't
-  /// happened yet.
+  /// A cell with no state to report: an adjacent month, a day that hasn't
+  /// happened yet, or one the server has no record for.
   Widget _buildInertCell(JournalTheme t, int day) {
     return Container(
       decoration: BoxDecoration(
@@ -167,8 +190,8 @@ class _MonthViewState extends State<MonthView> {
   }
 
   Widget _buildDayCell(JournalTheme t, int day) {
-    final accent = t.accent(widget.habit.color);
-    final date = DateTime(currentMonth.year, currentMonth.month, day);
+    final accent = t.accent(habit.color);
+    final date = DateTime(month.year, month.month, day);
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
 
@@ -197,7 +220,12 @@ class _MonthViewState extends State<MonthView> {
       return _buildInertCell(t, day);
     }
 
-    if (_completedOn(date)) {
+    final completion = monthCompletion;
+    final state = (completion != null && day - 1 < completion.length)
+        ? completion[day - 1]
+        : null;
+
+    if (state == true) {
       final ink = t.onAccent(accent);
       return Container(
         decoration: BoxDecoration(
@@ -228,41 +256,55 @@ class _MonthViewState extends State<MonthView> {
       );
     }
 
-    return Container(
-      decoration: BoxDecoration(
-        color: t.incomplete.withValues(alpha: t.tintMissedCell),
-        borderRadius: BorderRadius.circular(JournalTheme.radiusCell),
-      ),
-      child: Center(
-        child: Text(
-          '$day',
-          style: TextStyle(
-            fontSize: JournalTheme.sizeUnit,
-            color: t.incomplete,
+    if (state == false) {
+      return Container(
+        decoration: BoxDecoration(
+          color: t.incomplete.withValues(alpha: t.tintMissedCell),
+          borderRadius: BorderRadius.circular(JournalTheme.radiusCell),
+        ),
+        child: Center(
+          child: Text(
+            '$day',
+            style: TextStyle(
+              fontSize: JournalTheme.sizeUnit,
+              color: t.incomplete,
+            ),
           ),
+        ),
+      );
+    }
+
+    // state == null: no data for a day that already happened — the server
+    // has no record (before the habit existed, or the month hasn't loaded).
+    return _buildInertCell(t, day);
+  }
+
+  int _daysIn(DateTime month) => DateTime(month.year, month.month + 1, 0).day;
+}
+
+class _MonthGridSkeleton extends StatelessWidget {
+  const _MonthGridSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    final t = JournalTheme.of(context);
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      padding: EdgeInsets.zero,
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 7,
+        crossAxisSpacing: 6,
+        mainAxisSpacing: 6,
+        mainAxisExtent: 32,
+      ),
+      itemCount: 35,
+      itemBuilder: (context, index) => Container(
+        decoration: BoxDecoration(
+          color: t.inertCell,
+          borderRadius: BorderRadius.circular(JournalTheme.radiusCell),
         ),
       ),
     );
-  }
-
-  // -------------------------------------------------------------------- data
-  int _daysIn(DateTime month) => DateTime(month.year, month.month + 1, 0).day;
-
-  /// Completion for a past day.
-  ///
-  /// The last 7 days come from the habit's real `weekData`; anything older is
-  /// still placeholder until history is persisted.
-  bool _completedOn(DateTime date) {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final daysAgo = today.difference(date).inDays;
-    final count = widget.habit.weekData.length;
-
-    if (daysAgo >= 0 && daysAgo < count) {
-      return widget.habit.weekData[count - 1 - daysAgo];
-    }
-
-    // TODO: Replace with persisted history once a data layer exists.
-    return date.day % 3 != 0;
   }
 }

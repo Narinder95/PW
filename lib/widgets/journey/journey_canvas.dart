@@ -1,12 +1,12 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
 import '../../models/journey/journey_world.dart';
+import '../../models/walking_challenge.dart';
 import '../../services/animation/journey_scene.dart';
 import '../../services/animation/sprite_library.dart';
 import 'journey_world_painter.dart';
+import 'walking_challenge_card.dart';
 
 class JourneyCanvas extends StatefulWidget {
   final int stepsToday;
@@ -14,6 +14,20 @@ class JourneyCanvas extends StatefulWidget {
   final int exerciseMinutes;
   final int sleepHours;
   final Function(int steps)? onActivityLogged;
+  final WalkingChallenge? challenge;
+  final bool challengeLoading;
+  final bool challengePermissionDenied;
+  final VoidCallback? onConnectHealth;
+
+  /// The pet's step bank. Owned by [AppServices][1] (one session-lifetime
+  /// instance), not by this widget — this canvas is torn down and rebuilt
+  /// every time the Journey tab is hidden and shown again, and the bank must
+  /// survive that or the pet would re-walk steps it already burned. Null
+  /// falls back to a fresh bank of this widget's own, for standalone use
+  /// (tests, previews) outside the app's [AppScope].
+  ///
+  /// [1]: ../app_scope.dart
+  final PetStepBank? petStepBank;
 
   const JourneyCanvas({
     Key? key,
@@ -22,6 +36,11 @@ class JourneyCanvas extends StatefulWidget {
     this.exerciseMinutes = 0,
     this.sleepHours = 0,
     this.onActivityLogged,
+    this.challenge,
+    this.challengeLoading = false,
+    this.challengePermissionDenied = false,
+    this.onConnectHealth,
+    this.petStepBank,
   }) : super(key: key);
 
   @override
@@ -40,34 +59,27 @@ class JourneyCanvasState extends State<JourneyCanvas>
 
   Duration _lastTick = Duration.zero;
 
-  /// Yawn when nothing has been logged for a while.
-  Timer? _idleTimer;
-  DateTime _lastActivityTime = DateTime.now();
-  static const _idleTimeout = Duration(minutes: 1);
-
   @override
   void initState() {
     super.initState();
 
-    _world = JourneyWorld()
-      ..initialize(1, 1)
-      ..updateActivityStats(
-        steps: widget.stepsToday,
-        water: widget.waterIntake,
-        exercise: widget.exerciseMinutes,
-        sleep: widget.sleepHours,
-      );
-    _scene = JourneyScene(_world)..walk();
+    _world = JourneyWorld()..initialize(1, 1);
+    _scene = JourneyScene(_world, widget.petStepBank ?? PetStepBank());
+    // Deposit today's steps into the bank before deciding walk vs. yawn, so
+    // the pet doesn't flash a yawn on startup just because the sync order
+    // would otherwise ask it to walk on an empty bank.
+    _scene.syncSteps(widget.stepsToday);
+    _world.updateActivityStats(
+      steps: widget.stepsToday,
+      stepsGoal: widget.challenge?.target,
+      water: widget.waterIntake,
+      exercise: widget.exerciseMinutes,
+      sleep: widget.sleepHours,
+    );
+    _scene.walk();
 
     _ticker = createTicker(_onTick);
     _bootstrap();
-
-    _idleTimer = Timer.periodic(const Duration(seconds: 15), (_) {
-      if (_scene.mode != SceneMode.walking) return;
-      if (DateTime.now().difference(_lastActivityTime) < _idleTimeout) return;
-      _lastActivityTime = DateTime.now();
-      _scene.yawn();
-    });
   }
 
   /// Startup order is deliberate. The parallax layers are small and are all the
@@ -96,12 +108,17 @@ class JourneyCanvasState extends State<JourneyCanvas>
   @override
   void didUpdateWidget(JourneyCanvas oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.stepsToday != widget.stepsToday) {
+      _scene.syncSteps(widget.stepsToday);
+    }
     if (oldWidget.stepsToday != widget.stepsToday ||
+        oldWidget.challenge?.target != widget.challenge?.target ||
         oldWidget.waterIntake != widget.waterIntake ||
         oldWidget.exerciseMinutes != widget.exerciseMinutes ||
         oldWidget.sleepHours != widget.sleepHours) {
       _world.updateActivityStats(
         steps: widget.stepsToday,
+        stepsGoal: widget.challenge?.target,
         water: widget.waterIntake,
         exercise: widget.exerciseMinutes,
         sleep: widget.sleepHours,
@@ -112,7 +129,6 @@ class JourneyCanvasState extends State<JourneyCanvas>
   @override
   void dispose() {
     _ticker.dispose();
-    _idleTimer?.cancel();
     _scene.dispose();
     // Keep the parallax layers and pet cycles decoded so coming back to this
     // tab is instant; only the large activity sheets are given back.
@@ -121,8 +137,6 @@ class JourneyCanvasState extends State<JourneyCanvas>
   }
 
   // --- Public API used by JourneyScreen -------------------------------------
-
-  void resetActivityTimer() => _lastActivityTime = DateTime.now();
 
   /// Each of these plays its clip through once and then the pet resumes
   /// walking, regardless of how much the user logged.
@@ -137,7 +151,6 @@ class JourneyCanvasState extends State<JourneyCanvas>
   /// Decodes the clip if this is its first use, then plays it. The pet keeps
   /// walking during the decode rather than freezing on a blank frame.
   Future<void> _play(String name, PetState state) async {
-    _lastActivityTime = DateTime.now();
     final atlas = await _library.load(name);
     if (!mounted || atlas == null) return;
     _scene.startActivity(name, state);
@@ -154,17 +167,32 @@ class JourneyCanvasState extends State<JourneyCanvas>
       );
     }
 
-    return GestureDetector(
-      onTapDown: _handleCanvasTap,
-      // The canvas repaints every frame. A boundary keeps that off the rest of
-      // the screen, so the activity cards below are never re-rastered.
-      child: RepaintBoundary(
-        child: CustomPaint(
-          painter: JourneyWorldPainter(_scene),
-          willChange: true,
-          size: Size.infinite,
+    return Stack(
+      children: [
+        GestureDetector(
+          onTapDown: _handleCanvasTap,
+          // The canvas repaints every frame. A boundary keeps that off the
+          // rest of the screen, so the activity cards below are never
+          // re-rastered.
+          child: RepaintBoundary(
+            child: CustomPaint(
+              painter: JourneyWorldPainter(_scene),
+              willChange: true,
+              size: Size.infinite,
+            ),
+          ),
         ),
-      ),
+        Positioned(
+          top: 8,
+          left: 8,
+          child: WalkingTierBadge(
+            challenge: widget.challenge,
+            isLoading: widget.challengeLoading,
+            permissionDenied: widget.challengePermissionDenied,
+            onConnectHealth: widget.onConnectHealth,
+          ),
+        ),
+      ],
     );
   }
 
@@ -176,7 +204,6 @@ class JourneyCanvasState extends State<JourneyCanvas>
     final petCentre = Offset(box.size.width * 0.5, box.size.height * 0.7);
     if ((local - petCentre).distance <= box.size.width * 0.25) {
       _world.celebrate();
-      _lastActivityTime = DateTime.now();
     }
   }
 }

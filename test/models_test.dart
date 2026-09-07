@@ -11,10 +11,12 @@ import 'package:pw/models/friend_activity.dart';
 import 'package:pw/models/friend_habit.dart';
 import 'package:pw/models/friend_request.dart';
 import 'package:pw/models/habit.dart';
+import 'package:pw/models/habit_month_progress.dart';
 import 'package:pw/models/json.dart';
 import 'package:pw/models/match_suggestion.dart';
 import 'package:pw/models/nudge.dart';
 import 'package:pw/models/user_profile.dart';
+import 'package:pw/models/walking_challenge.dart';
 
 /// Payloads that have broken naive `fromJson` implementations before.
 const List<Object?> hostileValues = <Object?>[
@@ -168,6 +170,147 @@ void main() {
       expect(back.streak, 12);
       expect(back.name, 'Steps');
       expect(back.target, 10000);
+    });
+  });
+
+  group('HabitMonthReport', () {
+    Map<String, dynamic> reportJson() => {
+          'month': '2026-05',
+          'days': 3,
+          'habits': [
+            {
+              'id': 'h_1',
+              'name': 'Steps',
+              'icon': '👟',
+              'color': '#2E7D32',
+              'monthData': [true, false, null],
+              'progressData': [8342, 0, null],
+            },
+          ],
+        };
+
+    test('parses monthData preserving null as a distinct third state', () {
+      final report = HabitMonthReport.fromJson(reportJson());
+      expect(report.month, '2026-05');
+      expect(report.days, 3);
+      expect(report.habits, hasLength(1));
+
+      final habit = report.habits.single;
+      expect(habit.name, 'Steps');
+      expect(habit.monthData, [true, false, null]);
+    });
+
+    test('parses progressData keeping null distinct from a real zero', () {
+      final habit = HabitMonthReport.fromJson(reportJson()).habits.single;
+      expect(habit.progressData, [8342, 0, null]);
+    });
+
+    test('asNullableIntList never collapses null to zero', () {
+      expect(asNullableIntList([8342, 0, null, '12']), [8342, 0, null, 12]);
+      expect(asNullableIntList(null), isEmpty);
+    });
+
+    test('asTriStateList never collapses null to false', () {
+      expect(asTriStateList([true, false, null, 1, 0, 'yes']),
+          [true, false, null, true, false, true]);
+      expect(asTriStateList(null), isEmpty);
+      expect(asTriStateList('not a list'), isEmpty);
+    });
+
+    test('survives every hostile value in every field', () {
+      for (final junk in hostileValues) {
+        final payload = reportJson()..['month'] = junk;
+        expect(() => HabitMonthReport.fromJson(payload), returnsNormally);
+
+        final habitsPayload = reportJson();
+        habitsPayload['habits'] = junk;
+        expect(() => HabitMonthReport.fromJson(habitsPayload), returnsNormally);
+      }
+      expect(() => HabitMonthReport.fromJson(const <String, dynamic>{}), returnsNormally);
+      final empty = HabitMonthReport.fromJson(const <String, dynamic>{});
+      expect(empty.habits, isEmpty);
+      expect(empty.days, 0);
+    });
+  });
+
+  group('WalkingChallenge', () {
+    Map<String, dynamic> challengeJson() => {
+          'level': 'bronze',
+          'streakDays': 1,
+          'target': 10000,
+          'nextLevel': 'silver',
+          'daysToNextLevel': 2,
+          'todaySteps': 6200,
+          'todayStatus': 'warning',
+          'history': [
+            {'date': '2026-08-30', 'steps': 8100, 'target': 8000, 'status': 'met'},
+          ],
+        };
+
+    test('parses every field, including nested history entries', () {
+      final c = WalkingChallenge.fromJson(challengeJson());
+      expect(c.level, WalkingLevel.bronze);
+      expect(c.streakDays, 1);
+      expect(c.target, 10000);
+      expect(c.nextLevel, WalkingLevel.silver);
+      expect(c.daysToNextLevel, 2);
+      expect(c.todaySteps, 6200);
+      expect(c.todayStatus, DayStepStatus.warning);
+      expect(c.history, hasLength(1));
+      expect(c.history.single.status, DayStepStatus.met);
+      expect(c.history.single.steps, 8100);
+    });
+
+    test('nextLevel/daysToNextLevel are null at gold, not a parse error', () {
+      final json = challengeJson()
+        ..['level'] = 'gold'
+        ..remove('nextLevel')
+        ..remove('daysToNextLevel');
+      final c = WalkingChallenge.fromJson(json);
+      expect(c.level, WalkingLevel.gold);
+      expect(c.nextLevel, isNull);
+      expect(c.daysToNextLevel, isNull);
+    });
+
+    test('an unrecognised level/status degrades rather than throwing', () {
+      final json = challengeJson()
+        ..['level'] = 'platinum'
+        ..['todayStatus'] = 'something_new';
+      final c = WalkingChallenge.fromJson(json);
+      expect(c.level, WalkingLevel.none);
+      expect(c.todayStatus, DayStepStatus.noData);
+    });
+
+    test('hasWarning reflects today or the most recent committed day', () {
+      const clean = WalkingChallenge(
+        todayStatus: DayStepStatus.met,
+        history: [
+          StepDay(date: '2026-08-30', steps: 9000, target: 8000, status: DayStepStatus.met),
+        ],
+      );
+      expect(clean.hasWarning, isFalse);
+
+      const demoted = WalkingChallenge(
+        todayStatus: DayStepStatus.met,
+        history: [
+          StepDay(date: '2026-08-30', steps: 3000, target: 10000, status: DayStepStatus.shortfall),
+        ],
+      );
+      expect(demoted.hasWarning, isTrue);
+    });
+
+    test('survives every hostile value in every field', () {
+      for (final junk in hostileValues) {
+        for (final key in ['level', 'streakDays', 'target', 'nextLevel', 'daysToNextLevel', 'todaySteps', 'todayStatus', 'history']) {
+          final payload = challengeJson()..[key] = junk;
+          expect(() => WalkingChallenge.fromJson(payload), returnsNormally,
+              reason: 'WalkingChallenge.fromJson with $key = $junk');
+        }
+      }
+      expect(() => WalkingChallenge.fromJson(const <String, dynamic>{}), returnsNormally);
+      final empty = WalkingChallenge.fromJson(const <String, dynamic>{});
+      expect(empty.level, WalkingLevel.none);
+      expect(empty.history, isEmpty);
     });
   });
 

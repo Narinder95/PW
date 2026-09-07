@@ -1,0 +1,6 @@
+{
+  "name": "PW",
+  "slug": "pw-app",
+  "version": "1.0.0",
+  "platforms": ["ios", "android"]
+}

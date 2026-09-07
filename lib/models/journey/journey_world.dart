@@ -66,12 +66,14 @@ class JourneyWorld {
 
   // Activity stats (for display)
   int stepsToday;
+  int stepsGoal;
   int waterIntake;
   int exerciseMinutes;
   int sleepHours;
 
   JourneyWorld({
     this.stepsToday = 0,
+    this.stepsGoal = 10000,
     this.waterIntake = 0,
     this.exerciseMinutes = 0,
     this.sleepHours = 0,
@@ -216,11 +218,13 @@ class JourneyWorld {
 
   void updateActivityStats({
     int? steps,
+    int? stepsGoal,
     int? water,
     int? exercise,
     int? sleep,
   }) {
     if (steps != null) stepsToday = steps;
+    if (stepsGoal != null) this.stepsGoal = stepsGoal;
     if (water != null) waterIntake = water;
     if (exercise != null) exerciseMinutes = exercise;
     if (sleep != null) sleepHours = sleep;

@@ -1,8 +1,11 @@
 import {
   ApiError, sendJson, sendNoContent, newId, nowISO,
-  requireString, optionalString, requireInt, normalizeColor, parseDate,
+  requireString, optionalString, requireInt, normalizeColor, parseDate, parseMonth,
 } from '../http.js';
-import { todayISO, getHabit, listHabitRows, habitToJson, friendIds } from '../domain.js';
+import {
+  todayISO, getHabit, listHabitRows, habitToJson, habitMonthData, habitMonthProgressData,
+  daysInMonth, friendIds,
+} from '../domain.js';
 import { createNotification } from '../notifications.js';
 
 const DEFAULT_ICON = '*';
@@ -28,6 +31,21 @@ export function registerHabitRoutes(router, ctx) {
     const date = parseDate(url.searchParams.get('date')) ?? todayISO();
     const habits = listHabitRows(db, me.id).map((h) => habitToJson(db, h, date));
     sendJson(res, 200, { habits });
+  }, { auth: true });
+
+  /** For the radial monthly-progress card: every own habit's daily record for one month. */
+  router.get('/api/habits/month', async ({ res, url, me }) => {
+    const month = parseMonth(url.searchParams.get('month')) ?? todayISO().slice(0, 7);
+    const today = todayISO();
+    const habits = listHabitRows(db, me.id).map((row) => ({
+      id: row.id,
+      name: row.name,
+      icon: row.icon,
+      color: row.color,
+      monthData: habitMonthData(db, row.id, row.target, row.created_at, month, today),
+      progressData: habitMonthProgressData(db, row.id, month),
+    }));
+    sendJson(res, 200, { month, days: daysInMonth(month), habits });
   }, { auth: true });
 
   router.post('/api/habits', async ({ res, body, me }) => {

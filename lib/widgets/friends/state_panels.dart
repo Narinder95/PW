@@ -375,7 +375,16 @@ class ErrorPanel extends StatelessWidget {
             Row(
               children: [
                 ElevatedButton.icon(
-                  onPressed: onRetry,
+                  onPressed: () async {
+                    // A network failure this deep may mean the host detected
+                    // at launch has stopped answering (tunnel dropped, phone
+                    // moved networks); re-probe before trying again rather
+                    // than repeating the same dead request.
+                    if (isNetwork && !services.client.config.hasOverride) {
+                      await services.client.config.autoDetect();
+                    }
+                    onRetry();
+                  },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: t.action,
                     foregroundColor: t.onAccent(t.action),
@@ -484,7 +493,12 @@ Future<void> showChangeServerDialog(
   controller.dispose();
   if (result == null) return;
 
-  await services.client.config.setBaseUrl(result);
+  final config = services.client.config;
+  await config.setBaseUrl(result);
+  // An empty save clears the override rather than setting one; without a
+  // fresh probe here the config would silently fall back to the stale
+  // platform default (10.0.2.2 on Android) instead of re-detecting.
+  if (!config.hasOverride) await config.autoDetect();
   onChanged();
 }
 

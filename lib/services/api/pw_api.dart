@@ -7,10 +7,12 @@ import '../../models/friend_activity.dart';
 import '../../models/friend_habit.dart';
 import '../../models/friend_request.dart';
 import '../../models/habit.dart';
+import '../../models/habit_month_progress.dart';
 import '../../models/json.dart';
 import '../../models/match_suggestion.dart';
 import '../../models/nudge.dart';
 import '../../models/user_profile.dart';
+import '../../models/walking_challenge.dart';
 import 'api_client.dart';
 
 /// One typed method per endpoint in `docs/API_CONTRACT.md`.
@@ -193,6 +195,16 @@ class PwApi {
       }),
     );
     return HabitLogResult.fromJson(json);
+  }
+
+  /// `GET /api/habits/month?month=YYYY-MM` (defaults to the current month
+  /// server-side). Powers the Journal tab's radial monthly-progress card.
+  Future<HabitMonthReport> getHabitsMonth({DateTime? month}) async {
+    final json = await client.get(
+      '/api/habits/month',
+      query: {if (month != null) 'month': asYearMonth(month)},
+    );
+    return HabitMonthReport.fromJson(json);
   }
 
   // ----------------------------------------------------------------- friends
@@ -392,6 +404,33 @@ class PwApi {
         '/api/notifications/stream',
         {if (token != null) 'token': token},
       );
+
+  // ------------------------------------------------------- walking challenge
+
+  /// `GET /api/challenge`. Cheap read of the server's last-computed state,
+  /// without syncing any new step data.
+  Future<WalkingChallenge> getChallenge() async {
+    final json = await client.get('/api/challenge');
+    return WalkingChallenge.fromJson(asMap(json['challenge']));
+  }
+
+  /// `POST /api/steps/sync` -> `200 {challenge}`.
+  ///
+  /// [stepsByDate] maps `YYYY-MM-DD` -> total steps for that day, as read
+  /// from the device's own health data. 1-31 entries. The server takes the
+  /// **larger** of the existing and new value per date, so a resync of a
+  /// partial day can never lose steps.
+  Future<WalkingChallenge> syncSteps(Map<String, int> stepsByDate) async {
+    final json = await client.post(
+      '/api/steps/sync',
+      body: {
+        'days': stepsByDate.entries
+            .map((e) => {'date': e.key, 'steps': e.value})
+            .toList(growable: false),
+      },
+    );
+    return WalkingChallenge.fromJson(asMap(json['challenge']));
+  }
 
   // ----------------------------------------------------------------- devices
 

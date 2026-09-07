@@ -234,4 +234,83 @@ test('habits', async (t) => {
     assert.equal((await app.get('/api/habits')).status, 401);
     assert.equal((await app.post('/api/habits', { body: { name: 'x', target: 1 } })).status, 401);
   });
+
+  await t.test('GET /api/habits/month: true/false/null for done/missed/no-data', async () => {
+    const u = await makeUser(app);
+    const habit = await addHabit(u, { name: 'Streaky2', target: 1 });
+
+    await u.post(`/api/habits/${habit.id}/log`, { body: { progress: 1 } });
+    await u.post(`/api/habits/${habit.id}/log`, { body: { progress: 0, date: dayOffset(-1) } });
+
+    const now = new Date();
+    const month = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
+    const res = await u.get(`/api/habits/month?month=${month}`);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.month, month);
+    assert.equal(res.body.days, new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)).getUTCDate());
+
+    const h = res.body.habits.find((x) => x.id === habit.id);
+    assert.ok(h);
+    assert.equal(h.monthData.length, res.body.days);
+    assert.equal(h.progressData.length, res.body.days);
+
+    const todayIdx = now.getUTCDate() - 1;
+    assert.equal(h.monthData[todayIdx], true, 'today logged >= target');
+    assert.equal(h.progressData[todayIdx], 1, 'raw progress logged today');
+    if (todayIdx > 0) {
+      assert.equal(h.monthData[todayIdx - 1], false, 'yesterday logged short of target');
+      assert.equal(h.progressData[todayIdx - 1], 0, 'raw progress logged yesterday');
+    }
+    if (todayIdx + 1 < h.monthData.length) {
+      assert.equal(h.monthData[todayIdx + 1], null, 'tomorrow has not happened yet');
+      assert.equal(h.progressData[todayIdx + 1], null, 'tomorrow has no logged number either');
+    }
+  });
+
+  await t.test('GET /api/habits/month: an unlogged day that already happened is null progress but false monthData', async () => {
+    const u = await makeUser(app);
+    // Freshly created, so "today" is the one day that both exists for this
+    // habit and has already happened - exactly the day to check for the
+    // null-progress-but-false-monthData distinction without backdating.
+    const habit = await addHabit(u, { name: 'Streaky3', target: 5 });
+
+    const now = new Date();
+    const month = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
+    const res = await u.get(`/api/habits/month?month=${month}`);
+    const h = res.body.habits.find((x) => x.id === habit.id);
+
+    const todayIdx = now.getUTCDate() - 1;
+    assert.equal(h.monthData[todayIdx], false, 'not logged, but the day has happened');
+    assert.equal(h.progressData[todayIdx], null, 'no log row - must read as no data, not a real zero');
+  });
+
+  await t.test('GET /api/habits/month: a month before the habit existed is all null', async () => {
+    const u = await makeUser(app);
+    const habit = await addHabit(u, { name: 'NewHabit', target: 1 });
+
+    const now = new Date();
+    const prev = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+    const prevMonth = `${prev.getUTCFullYear()}-${String(prev.getUTCMonth() + 1).padStart(2, '0')}`;
+
+    const res = await u.get(`/api/habits/month?month=${prevMonth}`);
+    const h = res.body.habits.find((x) => x.id === habit.id);
+    assert.ok(h.monthData.every((v) => v === null));
+    assert.ok(h.progressData.every((v) => v === null));
+  });
+
+  await t.test('GET /api/habits/month: defaults to current month; rejects a bad month', async () => {
+    const u = await makeUser(app);
+    await addHabit(u, { name: 'X', target: 1 });
+
+    const res = await u.get('/api/habits/month');
+    assert.equal(res.status, 200);
+    assert.match(res.body.month, /^\d{4}-\d{2}$/);
+
+    assert.equal((await u.get('/api/habits/month?month=nope')).status, 400);
+    assert.equal((await u.get('/api/habits/month?month=2026-13')).status, 400);
+  });
+
+  await t.test('GET /api/habits/month requires auth', async () => {
+    assert.equal((await app.get('/api/habits/month')).status, 401);
+  });
 });

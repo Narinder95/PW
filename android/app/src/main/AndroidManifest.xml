@@ -24,7 +24,23 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- Walking challenge: lets Health Connect show its permissions
+                 rationale screen. Without this, requestAuthorization() fails
+                 silently instead of prompting the user. -->
+            <intent-filter>
+                <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
+            </intent-filter>
         </activity>
+        <activity-alias
+            android:name="ViewPermissionUsageActivity"
+            android:exported="true"
+            android:targetActivity=".MainActivity"
+            android:permission="android.permission.START_VIEW_PERMISSION_USAGE">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW_PERMISSION_USAGE" />
+                <category android:name="android.intent.category.HEALTH_PERMISSIONS" />
+            </intent-filter>
+        </activity-alias>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data
@@ -41,5 +57,19 @@
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
+        <!-- Walking challenge: lets the `health` plugin detect whether Health
+             Connect is installed, per its setup docs. -->
+        <package android:name="com.google.android.apps.healthdata" />
+        <intent>
+            <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
+        </intent>
     </queries>
+    <!-- Walking challenge: read-only access to the device's daily step count
+         via Health Connect. Without this the plugin's requestAuthorization()
+         silently returns false. -->
+    <uses-permission android:name="android.permission.health.READ_STEPS" />
+    <!-- Walking challenge fallback: lets NativeStepCounterSource read the
+         device's built-in step-counter sensor directly when Health Connect
+         has no synced data (e.g. Samsung Health isn't connected to it). -->
+    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
 </manifest>

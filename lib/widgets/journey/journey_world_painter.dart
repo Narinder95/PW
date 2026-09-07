@@ -35,10 +35,74 @@ class JourneyWorldPainter extends CustomPainter {
     _drawParallaxLayers(canvas, size);
     // _drawPlatforms(canvas, size);  // Removed - using ground layer instead
     // _drawEnvironmentObjects(canvas, size);  // Keep disabled for now
+    _drawStepBankBar(canvas, size);
     _drawPet(canvas, size);
     _drawParticles(canvas, size);
     _drawStatsOverlay(canvas, size);
   }
+
+  /// The step-bank bar: how many of today's steps the pet has "walked off"
+  /// (dark green) versus how many are still sitting in the bank waiting to be
+  /// burned (light green), out of the day's step goal. Sits low on the ground
+  /// layer so it never competes with the pet or the HUD.
+  void _drawStepBankBar(Canvas canvas, Size size) {
+    final goal = world.stepsGoal;
+    if (goal <= 0) return;
+
+    final total = world.stepsToday.clamp(0, goal).toDouble();
+    final remaining = scene.stepBank.remaining.clamp(0.0, goal.toDouble());
+    final consumed = (total - remaining).clamp(0.0, goal.toDouble());
+
+    const barHeight = 10.0;
+    final barWidth = size.width * 0.55;
+    final barLeft = (size.width - barWidth) / 2;
+    final barTop = size.height * 0.87;
+
+    final track = RRect.fromRectAndRadius(
+      Rect.fromLTWH(barLeft, barTop, barWidth, barHeight),
+      const Radius.circular(5),
+    );
+    canvas.drawRRect(track, _stepBankTrackPaint);
+
+    void drawSegment(double fromFraction, double toFraction, Paint paint) {
+      if (toFraction <= fromFraction) return;
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(
+            barLeft + barWidth * fromFraction,
+            barTop,
+            barWidth * (toFraction - fromFraction),
+            barHeight,
+          ),
+          const Radius.circular(5),
+        ),
+        paint,
+      );
+    }
+
+    final consumedFraction = consumed / goal;
+    final totalFraction = total / goal;
+    drawSegment(0, consumedFraction, _stepBankConsumedPaint);
+    drawSegment(consumedFraction, totalFraction, _stepBankRemainingPaint);
+
+    canvas.drawRRect(track, _stepBankBorderPaint);
+  }
+
+  static final Paint _stepBankTrackPaint = Paint()
+    ..color = Colors.black.withValues(alpha: 0.3);
+
+  // Steps the pet has already walked off.
+  static final Paint _stepBankConsumedPaint = Paint()
+    ..color = const Color(0xFF2E7D32);
+
+  // Steps still in the bank, waiting to be walked off.
+  static final Paint _stepBankRemainingPaint = Paint()
+    ..color = const Color(0xFF81C784);
+
+  static final Paint _stepBankBorderPaint = Paint()
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 1
+    ..color = Colors.white.withValues(alpha: 0.3);
 
   // ignore: unused_element
   void _drawParallaxBackground(Canvas canvas, Size size) {
@@ -198,11 +262,12 @@ class JourneyWorldPainter extends CustomPainter {
     }
   }
 
-  /// The four layers differ only in band and speed, so they share one routine.
+  /// The five layers differ only in band and speed, so they share one routine.
   /// Pixels-per-second of scroll; larger reads as nearer the camera.
   static const _parallaxOrder = <_ParallaxLayer>[
-    _ParallaxLayer('sky', 0.0, 0.4, 30.0),
-    _ParallaxLayer('mid', 0.2, 0.8, 60.0),
+    _ParallaxLayer('background', 0.0, 0.8, 30.0),
+    _ParallaxLayer('sky', 0.0, 0.5, 30.0),
+    _ParallaxLayer('mid', 0.0, 0.8, 60.0),
     _ParallaxLayer('near', 0.8, 0.9, 100.0),
     _ParallaxLayer('ground', 0.25, 1.0, 80.0),
   ];
@@ -393,7 +458,7 @@ class JourneyWorldPainter extends CustomPainter {
   }
 
   void _drawPet(Canvas canvas, Size size) {
-    final petSize = size.width * 0.35;
+    final petSize = size.width * 0.42;
     final petWidth = petSize * 1.2; // +20% wider
     final petHeight = petSize;
 

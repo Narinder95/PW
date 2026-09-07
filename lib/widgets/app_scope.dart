@@ -3,16 +3,19 @@ import 'package:flutter/material.dart';
 import '../models/app_notification.dart';
 import '../screens/add_friend_screen.dart';
 import '../screens/friend_detail_screen.dart';
+import '../services/animation/journey_scene.dart';
 import '../services/api/api_client.dart';
 import '../services/api/pw_api.dart';
 import '../services/auth_service.dart';
 import '../services/friends_repository.dart';
 import '../services/notification_service.dart';
 import '../services/push_service.dart';
+import '../services/walking_challenge_service.dart';
 
 /// Index of the Friends tab in the bottom nav. Named so the deep-link router
 /// does not hard-code a bare `2` in four places.
 const int kJournalTab = 0;
+const int kJourneyTab = 1;
 const int kFriendsTab = 2;
 
 /// Every long-lived service, constructed once in `main()` and handed down the
@@ -28,6 +31,13 @@ class AppServices {
   final FriendsRepository friends;
   final NotificationService notifications;
   final PushService push;
+  final WalkingChallengeService walkingChallenge;
+
+  /// The Journey pet's step bank. Held here — not on `JourneyScene` — because
+  /// switching away from the Journey tab tears down its canvas (and scene)
+  /// entirely; this object outlives that so a tab round-trip can't refill
+  /// steps the pet already walked off. See [PetStepBank]'s doc comment.
+  final PetStepBank petStepBank = PetStepBank();
 
   /// Root navigator, so a push tap can route without a [BuildContext].
   final GlobalKey<NavigatorState> navigatorKey;
@@ -49,6 +59,7 @@ class AppServices {
     required this.friends,
     required this.notifications,
     required this.push,
+    required this.walkingChallenge,
     required this.navigatorKey,
   });
 
@@ -132,6 +143,7 @@ class AppServices {
   Future<void> onSignedOut() async {
     await notifications.stop();
     friends.clear();
+    walkingChallenge.clear();
     tab.value = kJournalTab;
   }
 
@@ -140,6 +152,7 @@ class AppServices {
     pendingNudgeFocus.dispose();
     notifications.dispose();
     friends.dispose();
+    walkingChallenge.dispose();
     auth.dispose();
     push.dispose();
     client.close();

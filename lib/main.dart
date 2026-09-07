@@ -13,6 +13,8 @@ import 'services/auth_service.dart';
 import 'services/friends_repository.dart';
 import 'services/notification_service.dart';
 import 'services/push_service.dart';
+import 'services/step_source.dart';
+import 'services/walking_challenge_service.dart';
 import 'utils/journal_theme.dart';
 import 'widgets/app_scope.dart';
 import 'widgets/notification_banner.dart';
@@ -86,6 +88,16 @@ class _PwAppState extends State<PwApp> {
       friends: FriendsRepository(api: api),
       notifications: NotificationService(api: api, client: client),
       push: push,
+      walkingChallenge: WalkingChallengeService(
+        api: api,
+        // Health Connect/HealthKit first; if it has no synced data (e.g. a
+        // Samsung phone where Samsung Health isn't connected to Health
+        // Connect), fall back to reading the device's own step sensor.
+        stepSource: CompositeStepSource(
+          primary: HealthStepSource(),
+          fallback: NativeStepCounterSource(),
+        ),
+      ),
       navigatorKey: GlobalKey<NavigatorState>(),
     );
 
@@ -192,8 +204,16 @@ class _AccountSetupFailedState extends State<_AccountSetupFailed> {
 
   Future<void> _retry() async {
     setState(() => _retrying = true);
+    final config = AppScope.of(context).client.config;
+    // Re-probe candidate hosts: the very first autoDetect() (in main()) may
+    // have run before a physical device's adb-reverse tunnel was even up, and
+    // this is the only retry path a freshly-installed app has. A no-op when
+    // the user already set an explicit override.
+    if (!config.hasOverride) await config.autoDetect();
+    if (!mounted) return;
     await AppScope.of(context).auth.ensureAccount();
-    if (mounted) setState(() => _retrying = false);
+    if (!mounted) return;
+    setState(() => _retrying = false);
   }
 
   @override

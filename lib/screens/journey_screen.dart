@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../widgets/activity_input_card.dart';
+import '../widgets/app_scope.dart';
 import '../widgets/journey/journey_canvas.dart';
 
 class JourneyScreen extends StatefulWidget {
@@ -16,13 +17,29 @@ class _JourneyScreenState extends State<JourneyScreen> {
     'sleep': 0,
     'meditation': 0,
     'reading': 0,
-    'steps': 0,
   };
 
   final scrollController = ScrollController();
   final GlobalKey<JourneyCanvasState> _journeyCanvasKey = GlobalKey();
   bool _isSaving = false;
   DateTime? _lastSaveTime;
+
+  AppServices? _services;
+  bool _bootstrapped = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final services = AppScope.of(context);
+    if (identical(_services, services)) return;
+    _services = services;
+
+    if (!_bootstrapped && services.auth.isSignedIn) {
+      _bootstrapped = true;
+      WidgetsBinding.instance
+          .addPostFrameCallback((_) => services.walkingChallenge.syncFromDevice());
+    }
+  }
 
   @override
   void dispose() {
@@ -36,38 +53,11 @@ class _JourneyScreenState extends State<JourneyScreen> {
     _isSaving = true;
     _lastSaveTime = DateTime.now();
 
-    // Reset yawning cycle timer when activity is logged
-    _journeyCanvasKey.currentState?.resetActivityTimer();
-
     try {
       // TODO: Send to backend/Firebase
       // await FirebaseService.saveActivity(type, activityValues[type]!);
-
-      // Show subtle save indicator
-      if (mounted) {
-        ScaffoldMessenger.of(context).clearSnackBars();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              '💾 ${type.replaceFirst(type[0], type[0].toUpperCase())} logged',
-            ),
-            backgroundColor: Colors.green[600],
-            duration: const Duration(milliseconds: 800),
-            behavior: SnackBarBehavior.floating,
-            margin: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
-          ),
-        );
-      }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('❌ Failed to save'),
-            backgroundColor: Colors.red[600],
-            duration: const Duration(seconds: 2),
-          ),
-        );
-      }
+      // Silently fail
     } finally {
       _isSaving = false;
     }
@@ -75,6 +65,8 @@ class _JourneyScreenState extends State<JourneyScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final services = AppScope.of(context);
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Journey'),
@@ -82,25 +74,37 @@ class _JourneyScreenState extends State<JourneyScreen> {
         elevation: 0,
       ),
       body: SafeArea(
-        child: LayoutBuilder(
+        child: ListenableBuilder(
+          listenable: services.walkingChallenge,
+          builder: (context, _) => LayoutBuilder(
           builder: (context, constraints) {
             final screenHeight = constraints.maxHeight;
             final topSectionHeight = screenHeight * 0.6;
             final bottomSectionHeight = screenHeight * 0.4;
+            final challenge = services.walkingChallenge.challenge;
 
             return Column(
               children: [
-                // TOP 60% - 2D Game Canvas
+                // TOP 60% - 2D Game Canvas, with the walking-challenge tier
+                // shown as a tiny badge overlaying the canvas rather than a
+                // row of its own.
                 SizedBox(
                   height: topSectionHeight,
                   child: Padding(
                     padding: const EdgeInsets.all(12),
                     child: JourneyCanvas(
                       key: _journeyCanvasKey,
-                      stepsToday: activityValues['steps']!,
+                      stepsToday: challenge?.todaySteps ?? 0,
                       waterIntake: activityValues['water']!,
                       exerciseMinutes: activityValues['exercise']!,
                       sleepHours: activityValues['sleep']!,
+                      challenge: challenge,
+                      challengeLoading: services.walkingChallenge.isLoading,
+                      challengePermissionDenied:
+                          services.walkingChallenge.permissionDenied,
+                      petStepBank: services.petStepBank,
+                      onConnectHealth: () =>
+                          services.walkingChallenge.syncFromDevice(),
                       onActivityLogged: (steps) {
                         // Optional: trigger celebration animation
                       },
@@ -170,7 +174,7 @@ class _JourneyScreenState extends State<JourneyScreen> {
                                 ActivityInputCard(
                                   icon: '💧',
                                   label: 'Water',
-                                  unit: 'cups',
+                                  unit: 'L',
                                   value: activityValues['water']!,
                                   onChanged: (value) {
                                     final previousValue = activityValues['water']!;
@@ -184,8 +188,8 @@ class _JourneyScreenState extends State<JourneyScreen> {
                                           ?.startDrinkingWater();
                                     }
                                   },
-                                  presets: const [1, 2],
-                                  color: const Color(0xFF0097A7),
+                                  presets: const [100, 200],
+                                  color: const Color(0xFF2DD4BF),
                                 ),
                                 const SizedBox(width: 10),
                                 ActivityInputCard(
@@ -206,7 +210,7 @@ class _JourneyScreenState extends State<JourneyScreen> {
                                     }
                                   },
                                   presets: const [15, 30],
-                                  color: const Color(0xFFFF7043),
+                                  color: const Color(0xFFFB7185),
                                 ),
                                 const SizedBox(width: 10),
                                 ActivityInputCard(
@@ -221,7 +225,7 @@ class _JourneyScreenState extends State<JourneyScreen> {
                                     _autoSaveActivity('sleep');
                                   },
                                   presets: const [1, 2],
-                                  color: const Color(0xFF7E57C2),
+                                  color: const Color(0xFFA78BFA),
                                 ),
                                 const SizedBox(width: 10),
                                 ActivityInputCard(
@@ -242,11 +246,11 @@ class _JourneyScreenState extends State<JourneyScreen> {
                                     }
                                   },
                                   presets: const [5, 10],
-                                  color: const Color(0xFF26A69A),
+                                  color: const Color(0xFF20B2AA),
                                 ),
                                 const SizedBox(width: 10),
                                 ActivityInputCard(
-                                  icon: '📚',
+                                  icon: '📖',
                                   label: 'Read',
                                   unit: 'min',
                                   value: activityValues['reading']!,
@@ -263,22 +267,7 @@ class _JourneyScreenState extends State<JourneyScreen> {
                                     }
                                   },
                                   presets: const [15, 30],
-                                  color: const Color(0xFFFFA726),
-                                ),
-                                const SizedBox(width: 10),
-                                ActivityInputCard(
-                                  icon: '👟',
-                                  label: 'Steps',
-                                  unit: 'k',
-                                  value: activityValues['steps']!,
-                                  onChanged: (value) {
-                                    setState(() {
-                                      activityValues['steps'] = value;
-                                    });
-                                    _autoSaveActivity('steps');
-                                  },
-                                  presets: const [1000, 5000],
-                                  color: const Color(0xFF2E7D32),
+                                  color: const Color(0xFFFBBF24),
                                 ),
                               ],
                             ),
@@ -325,9 +314,9 @@ class _JourneyScreenState extends State<JourneyScreen> {
               ],
             );
           },
+          ),
         ),
       ),
     );
   }
-
 }

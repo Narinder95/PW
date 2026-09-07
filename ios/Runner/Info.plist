@@ -26,6 +26,17 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<!-- Walking challenge: read-only access to the device's step count via
+	     HealthKit. The "HealthKit" capability must ALSO be enabled on the
+	     Runner target in Xcode (Signing & Capabilities) — that step cannot be
+	     done from this repo alone and has to happen on a Mac with Xcode. -->
+	<key>NSHealthShareUsageDescription</key>
+	<string>PW reads your daily step count to track your walking challenge progress.</string>
+	<!-- Walking challenge fallback: lets NativeStepCounterSource read the
+	     device's built-in pedometer (CMPedometer) when HealthKit has no
+	     synced data. -->
+	<key>NSMotionUsageDescription</key>
+	<string>PW reads your step count to track your walking challenge progress.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

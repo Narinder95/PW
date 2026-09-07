@@ -1,28 +1,19 @@
 import 'package:flutter/material.dart';
 import '../models/habit.dart';
+import '../screens/habit_detail_screen.dart';
 import '../utils/journal_theme.dart';
-import 'month_view.dart';
 
-class HabitCard extends StatefulWidget {
+class HabitCard extends StatelessWidget {
   final Habit habit;
 
   /// Called with the day's new total when the user logs progress.
   ///
   /// `POST /api/habits/:id/log` **sets** the day's progress rather than
-  /// incrementing it, so this is an absolute value. Null leaves the sheet's
-  /// log affordance out entirely.
+  /// incrementing it, so this is an absolute value. Null leaves the detail
+  /// page's log affordance out entirely.
   final Future<void> Function(int progress)? onLog;
 
   const HabitCard({super.key, required this.habit, this.onLog});
-
-  @override
-  State<HabitCard> createState() => _HabitCardState();
-}
-
-class _HabitCardState extends State<HabitCard> {
-  bool isExpanded = false;
-
-  Habit get habit => widget.habit;
 
   @override
   Widget build(BuildContext context) {
@@ -30,7 +21,11 @@ class _HabitCardState extends State<HabitCard> {
     final accent = t.accent(habit.color);
 
     return GestureDetector(
-      onTap: () => _showHabitDetailModal(context),
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => HabitDetailScreen(habit: habit, onLog: onLog),
+        ),
+      ),
       child: Container(
         decoration: BoxDecoration(
           color: t.surface,
@@ -55,11 +50,6 @@ class _HabitCardState extends State<HabitCard> {
                 child: _buildWeekDots(t, accent),
               ),
               const SizedBox(height: 14),
-              if (isExpanded)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 2, 16, 14),
-                  child: MonthView(habit: habit),
-                ),
               _buildProgressRail(t, accent),
             ],
           ),
@@ -116,27 +106,11 @@ class _HabitCardState extends State<HabitCard> {
         ),
         const SizedBox(width: 8),
 
-        // Chevron + value + streak
+        // Value + streak
         Column(
           crossAxisAlignment: CrossAxisAlignment.end,
           mainAxisSize: MainAxisSize.min,
           children: [
-            GestureDetector(
-              onTap: () => setState(() => isExpanded = !isExpanded),
-              behavior: HitTestBehavior.opaque,
-              child: Padding(
-                padding: const EdgeInsets.only(left: 12, bottom: 2),
-                child: AnimatedRotation(
-                  turns: isExpanded ? 0.5 : 0,
-                  duration: const Duration(milliseconds: 250),
-                  child: Icon(
-                    Icons.expand_more_rounded,
-                    size: 24,
-                    color: t.textSecondary,
-                  ),
-                ),
-              ),
-            ),
             Text(
               JournalTheme.formatCount(habit.progress),
               style: t.habitValue(accent),
@@ -297,147 +271,5 @@ class _HabitCardState extends State<HabitCard> {
         ),
       ),
     );
-  }
-
-  // ------------------------------------------------------------------- sheet
-  void _showHabitDetailModal(BuildContext context) {
-    final t = JournalTheme.of(context);
-    final accent = t.accent(habit.color);
-    final onLog = widget.onLog;
-    final progressController =
-        TextEditingController(text: '${habit.progress}');
-
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: t.background,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (context) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Grab handle
-              Container(
-                width: 36,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: t.textMuted.withValues(alpha: 0.3),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              const SizedBox(height: 20),
-              Row(
-                children: [
-                  Container(
-                    width: 48,
-                    height: 48,
-                    decoration: BoxDecoration(
-                      color: accent.withValues(alpha: t.tintIcon),
-                      borderRadius:
-                          BorderRadius.circular(JournalTheme.radiusTile),
-                    ),
-                    child: Center(
-                      child: Text(
-                        habit.icon,
-                        style:
-                            const TextStyle(fontSize: JournalTheme.sizeEmoji),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(habit.name, style: t.headline),
-                        const SizedBox(height: 2),
-                        Text(
-                          '${JournalTheme.formatCount(habit.progress)} of '
-                          '${JournalTheme.formatCount(habit.target)} ${habit.unit}',
-                          style: t.subhead,
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 20),
-              if (onLog != null) ...[
-                TextField(
-                  controller: progressController,
-                  keyboardType: TextInputType.number,
-                  style: TextStyle(color: t.textPrimary),
-                  decoration: InputDecoration(
-                    labelText: "Today's total",
-                    suffixText: habit.unit,
-                    labelStyle: TextStyle(color: t.textSecondary),
-                    suffixStyle: TextStyle(color: t.textMuted),
-                    filled: true,
-                    fillColor: t.surfaceBright,
-                    border: OutlineInputBorder(
-                      borderRadius:
-                          BorderRadius.circular(JournalTheme.radiusTile),
-                      borderSide: BorderSide(color: t.outline),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius:
-                          BorderRadius.circular(JournalTheme.radiusTile),
-                      borderSide: BorderSide(color: t.outline),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 14),
-              ],
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: accent,
-                    foregroundColor: t.onAccent(accent),
-                    elevation: 0,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius:
-                          BorderRadius.circular(JournalTheme.radiusTile),
-                    ),
-                  ),
-                  onPressed: onLog == null
-                      ? () => Navigator.pop(context)
-                      : () {
-                          // The endpoint sets the day's total, so a negative
-                          // or unparseable entry falls back to no change.
-                          final parsed = int.tryParse(
-                                progressController.text.trim(),
-                              ) ??
-                              habit.progress;
-                          Navigator.pop(context);
-                          onLog(parsed < 0 ? 0 : parsed);
-                        },
-                  child: const Text(
-                    'Log Activity',
-                    style: TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 8),
-              SizedBox(
-                width: double.infinity,
-                child: TextButton(
-                  style: TextButton.styleFrom(
-                    foregroundColor: t.textSecondary,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                  ),
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Close'),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    ).whenComplete(progressController.dispose);
   }
 }

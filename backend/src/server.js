@@ -14,6 +14,7 @@ import { registerNotificationRoutes } from './routes/notifications.js';
 import { registerMatchRoutes } from './routes/match.js';
 import { registerActivityRoutes } from './routes/activity.js';
 import { registerDeviceRoutes } from './routes/devices.js';
+import { registerStepsRoutes } from './routes/steps.js';
 
 export const API_VERSION = '1';
 
@@ -50,6 +51,7 @@ export function createServer(db, options = {}) {
   registerMatchRoutes(router, ctx);
   registerActivityRoutes(router, ctx);
   registerDeviceRoutes(router, ctx);
+  registerStepsRoutes(router, ctx);
 
   const server = http.createServer((req, res) => {
     handle(req, res).catch((err) => {

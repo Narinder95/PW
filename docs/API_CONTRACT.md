@@ -81,6 +81,37 @@ use the server's `streak` value and must NOT re-derive it from `weekData`
 only. `completedToday` is likewise authoritative from the server, which knows
 the user's timezone-local day boundary.
 
+### HabitMonth
+```json
+{
+  "month": "2026-05",
+  "days": 31,
+  "habits": [
+    {
+      "id": "h_1",
+      "name": "Steps",
+      "icon": "👟",
+      "color": "#2E7D32",
+      "monthData": [true, false, null, "…"],
+      "progressData": [8342, 0, null, "…"]
+    }
+  ]
+}
+```
+`monthData` has length `days`, oldest first (index 0 = the 1st of the month).
+Each entry is `true` (target met that day), `false` (logged short, or not
+logged, on a day that already happened), or `null` for a day before the habit
+was created or after today — **no data**, which the client must render
+differently from a miss.
+
+`progressData` is the same length and day alignment as `monthData`, but holds
+the raw `progress` actually logged that day instead of a target comparison.
+An entry is `null` whenever there is no log row for that date — no log ever
+made, a day before the habit existed, or a day in the future — **never** `0`
+for "not logged"; `0` means the user logged zero. Averages and other
+aggregates must be computed only over non-null entries, otherwise an unlogged
+day silently drags the average down as if it were a real zero.
+
 ### FriendSummary
 ```json
 {
@@ -177,6 +208,44 @@ friend with no habits) - clients must not divide by it blindly.
 `actorId`, `actorName`, `avatarColor`, `icon`, `color`, `refId`, `refType` are
 all nullable. Clients must render a notification with every one of them null.
 
+### WalkingChallenge
+```json
+{
+  "level": "bronze",
+  "streakDays": 1,
+  "target": 10000,
+  "nextLevel": "silver",
+  "daysToNextLevel": 2,
+  "todaySteps": 6200,
+  "todayStatus": "warning",
+  "history": [
+    { "date": "2026-08-30", "steps": 8100, "target": 8000, "status": "met" }
+  ]
+}
+```
+`level` is one of `none` | `bronze` | `silver` | `gold` - `none` means no
+tier has been earned yet. `target` is the step count that applies **today**,
+given the committed level (bronze pursues the 10,000 silver target, gold
+maintains 12,000 forever). `nextLevel` is `null` once at gold.
+`daysToNextLevel` is `null` at gold, otherwise how many more full-target days
+are needed (counting a frozen `warning`/`no_data` day as unchanged, not reset).
+
+`todayStatus` / each `history[].status` is one of:
+- `met` - hit the day's target.
+- `warning` - hit 80-99% of the target; the streak freezes for that day
+  (neither advances nor resets).
+- `shortfall` - a synced day under 80% of target; demotes one level
+  (`gold`→`silver`→`bronze`→`none`) and resets the streak to 0.
+- `no_data` - the device never reported a step count for that date; treated
+  like `warning` (freezes, never demotes - a sync gap is not proof of
+  inactivity).
+
+**`streakDays`/`level`/`history` are computed server-side over the full
+`daily_steps` history, the same way `Habit.streak` is** - the client must not
+recompute promotion/demotion locally. The computation only ever commits
+*yesterday and earlier*; today only ever shows as `todaySteps`/`todayStatus`,
+a live preview that is not yet folded into the streak.
+
 ### FriendRequest
 ```json
 {
@@ -250,6 +319,7 @@ returns the same `401` it gives an unknown user, so handles cannot be probed.
 | PATCH | `/api/habits/:id` | `{name?, icon?, color?, target?, unit?}` | `200 {habit}` |
 | DELETE | `/api/habits/:id` | - | `204` |
 | POST | `/api/habits/:id/log` | `{progress, date?}` | `200 {habit, activity\|null}` |
+| GET | `/api/habits/month` | `?month=YYYY-MM` (default current month) | `200 HabitMonth` |
 
 `target` must be an integer >= 1. `progress` must be an integer >= 0.
 
@@ -408,6 +478,19 @@ data: {"t":"2026-08-31T09:00:00.000Z"}
 `ping` every 25s so intermediaries do not close the connection. Clients that
 cannot hold an SSE connection fall back to polling
 `GET /api/notifications/unread-count`.
+
+### Walking challenge
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/api/challenge` | - | `200 {challenge: WalkingChallenge}` |
+| POST | `/api/steps/sync` | `{days: [{date, steps}, ...]}` | `200 {challenge: WalkingChallenge}` |
+
+`POST /api/steps/sync` upserts one `daily_steps` row per entry (1-31 per
+call, `steps` an integer 0-200000). Written from the device's own health data
+(Health Connect on Android, HealthKit on iOS) - never manually entered.
+Re-syncing the same `date` takes the **larger** of the existing and new value,
+never the smaller: a client may resync a partial day more than once as the
+device backfills, and a later, larger total must win.
 
 ### Push devices
 

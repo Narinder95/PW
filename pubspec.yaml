@@ -14,6 +14,11 @@ dependencies:
   # Backend integration: REST client + token/base-url persistence.
   http: ^1.2.0
   shared_preferences: ^2.2.0
+  health: ^13.3.2
+  # Walking challenge fallback: reads the device's built-in step-counter
+  # sensor directly when Health Connect / HealthKit has no synced data.
+  pedometer: ^4.2.0
+  permission_handler: ^12.0.3
 
 dev_dependencies:
   flutter_test:

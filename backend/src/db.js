@@ -155,6 +155,18 @@ CREATE TABLE IF NOT EXISTS devices (
 );
 CREATE INDEX IF NOT EXISTS idx_devices_user ON devices(user_id);
 
+-- One row per user per calendar day, upserted from the device's health data
+-- (Health Connect / HealthKit) via POST /api/steps/sync. Drives the walking
+-- challenge state computed in domain.js — there is no separate "current
+-- level" row to keep in sync, it's recomputed from this history every time.
+CREATE TABLE IF NOT EXISTS daily_steps (
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  date       TEXT NOT NULL,               -- YYYY-MM-DD (UTC), same convention as habit_logs
+  steps      INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (user_id, date)
+);
+
 CREATE TABLE IF NOT EXISTS push_deliveries (
   id              TEXT PRIMARY KEY,
   user_id         TEXT NOT NULL,

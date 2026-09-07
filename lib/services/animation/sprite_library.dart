@@ -87,6 +87,25 @@ class SpriteLibrary {
     }));
   }
 
+  /// Manifest animation names starting with [prefix], sorted by their numeric
+  /// suffix (`streak_2` before `streak_10`, not lexicographically).
+  ///
+  /// Lets a caller — the streak-celebration round robin — discover which
+  /// clips actually built without hard-coding a count: a folder still empty
+  /// in `tool/build_atlases.dart` simply never produces a manifest entry, so
+  /// it never appears here.
+  Future<List<String>> namesWithPrefix(String prefix) async {
+    await _ensureManifest();
+    final animations = _manifest?['animations'] as Map<String, dynamic>? ?? const {};
+    final names = animations.keys.where((k) => k.startsWith(prefix)).toList();
+    names.sort((a, b) {
+      final an = int.tryParse(a.substring(prefix.length)) ?? 0;
+      final bn = int.tryParse(b.substring(prefix.length)) ?? 0;
+      return an.compareTo(bn);
+    });
+    return names;
+  }
+
   /// Already-decoded atlas, or null. Safe to call from a painter.
   SpriteAtlas? peek(String name) {
     final atlas = _atlases[name];

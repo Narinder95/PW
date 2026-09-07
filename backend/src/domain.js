@@ -157,6 +157,64 @@ function walkStreak(completeDates, endDate) {
   return n;
 }
 
+/** Number of days in `month` (`YYYY-MM`). */
+export function daysInMonth(month) {
+  const [year, mon] = month.split('-').map(Number);
+  return new Date(Date.UTC(year, mon, 0)).getUTCDate();
+}
+
+/**
+ * One entry per day of `month` (`YYYY-MM`), oldest first (index 0 = the
+ * 1st): `true` (target met), `false` (logged short, or not logged, on a day
+ * that already happened), or `null` for a day before `createdAt` or after
+ * `todayDate` — no data to report, distinct from a miss.
+ */
+export function habitMonthData(db, habitId, target, createdAt, month, todayDate) {
+  const total = daysInMonth(month);
+  const first = `${month}-01`;
+  const last = `${month}-${String(total).padStart(2, '0')}`;
+  const rows = db
+    .prepare('SELECT date, progress FROM habit_logs WHERE habit_id = ? AND date >= ? AND date <= ?')
+    .all(habitId, first, last);
+  const byDate = new Map(rows.map((r) => [r.date, r.progress]));
+  const createdDate = createdAt.slice(0, 10);
+  const out = [];
+  for (let day = 1; day <= total; day++) {
+    const date = `${month}-${String(day).padStart(2, '0')}`;
+    if (byDate.has(date)) {
+      // An actual log row is truthful even for a backfilled date outside the
+      // creation/today window (the log endpoint does not forbid that).
+      out.push(byDate.get(date) >= target);
+    } else {
+      out.push(date < createdDate || date > todayDate ? null : false);
+    }
+  }
+  return out;
+}
+
+/**
+ * One entry per day of `month` (`YYYY-MM`), oldest first (index 0 = the
+ * 1st): the raw `progress` actually logged that day, or `null` if nothing was
+ * ever logged for it. Unlike [habitMonthData] this never infers `false` for
+ * an unlogged past day — there is no real number to show for it, so it must
+ * read as "no data" rather than "0 logged".
+ */
+export function habitMonthProgressData(db, habitId, month) {
+  const total = daysInMonth(month);
+  const first = `${month}-01`;
+  const last = `${month}-${String(total).padStart(2, '0')}`;
+  const rows = db
+    .prepare('SELECT date, progress FROM habit_logs WHERE habit_id = ? AND date >= ? AND date <= ?')
+    .all(habitId, first, last);
+  const byDate = new Map(rows.map((r) => [r.date, r.progress]));
+  const out = [];
+  for (let day = 1; day <= total; day++) {
+    const date = `${month}-${String(day).padStart(2, '0')}`;
+    out.push(byDate.has(date) ? byDate.get(date) : null);
+  }
+  return out;
+}
+
 /** Habit shape from the contract (own habit). */
 export function habitToJson(db, row, date) {
   const progress = progressFor(db, row.id, date);
@@ -366,6 +424,101 @@ export function matchReason(sharedCount, mutualCount) {
   if (mutualCount > 0) parts.push(`${mutualCount} mutual friend${mutualCount === 1 ? '' : 's'}`);
   if (parts.length === 0) return 'New on PW - say hello';
   return parts.join(' - ');
+}
+
+// ------------------------------------------------------------- walking challenge
+
+export const WALKING_TARGETS = { bronze: 8000, silver: 10000, gold: 12000 };
+const LEVEL_NEXT = { none: 'bronze', bronze: 'silver', silver: 'gold', gold: 'gold' };
+const LEVEL_PREV = { gold: 'silver', silver: 'bronze', bronze: 'none', none: 'none' };
+const MAX_WALK_LOOKBACK = 400; // same cap as MAX_STREAK_LOOKBACK above
+
+function targetForLevel(level) {
+  if (level === 'none') return WALKING_TARGETS.bronze;
+  if (level === 'bronze') return WALKING_TARGETS.silver;
+  return WALKING_TARGETS.gold; // silver -> pursuing gold; gold -> maintaining gold
+}
+
+/**
+ * Walks daily_steps chronologically through **yesterday** (never today —
+ * today is still in progress, so it must not trigger a promotion, warning or
+ * demotion until the day rolls over; same reasoning `habitStreak` uses for an
+ * incomplete "today"). Returns the committed level/streak plus a trailing
+ * history, all derived fresh from the log every call - there is no separate
+ * mutable "current state" row.
+ *
+ * A day with no synced row (the device never reported steps - the app may
+ * not have been opened) is treated as a warning/freeze, never a demotion: a
+ * sync gap is not proof the user fell short. Only a day with an actual
+ * synced value under 80% of that day's target demotes.
+ */
+export function walkingChallengeState(db, userId, todayDate) {
+  const yesterday = addDays(todayDate, -1);
+  const start = addDays(yesterday, -(MAX_WALK_LOOKBACK - 1));
+  const rows = db
+    .prepare('SELECT date, steps FROM daily_steps WHERE user_id = ? AND date >= ? AND date <= ? ORDER BY date ASC')
+    .all(userId, start, yesterday);
+  const stepsByDate = new Map(rows.map((r) => [r.date, r.steps]));
+
+  let level = 'none';
+  let streak = 0;
+  const history = [];
+  let cursor = start;
+  while (cursor <= yesterday) {
+    const hasRow = stepsByDate.has(cursor);
+    const steps = stepsByDate.get(cursor) ?? 0;
+    const target = targetForLevel(level);
+    const ratio = target > 0 ? steps / target : 0;
+    let status;
+    if (steps >= target) {
+      status = 'met';
+      streak += 1;
+      if (level !== 'gold' && streak >= 3) {
+        level = LEVEL_NEXT[level];
+        streak = 0;
+      }
+    } else if (ratio >= 0.8) {
+      status = 'warning'; // frozen: streak unchanged
+    } else if (!hasRow) {
+      status = 'no_data'; // frozen: streak unchanged, never demotes
+    } else {
+      status = 'shortfall';
+      if (level !== 'none') level = LEVEL_PREV[level];
+      streak = 0;
+    }
+    history.push({ date: cursor, steps, target, status });
+    cursor = addDays(cursor, 1);
+  }
+
+  const target = targetForLevel(level);
+  const todayRow = db.prepare('SELECT steps FROM daily_steps WHERE user_id = ? AND date = ?').get(userId, todayDate);
+  const todaySteps = todayRow ? todayRow.steps : 0;
+  const todayRatio = target > 0 ? todaySteps / target : 0;
+  const todayStatus = todaySteps >= target ? 'met' : todayRatio >= 0.8 ? 'warning' : todayRow ? 'shortfall' : 'no_data';
+
+  return {
+    level,
+    streakDays: streak,
+    target,
+    nextLevel: LEVEL_NEXT[level] === level ? null : LEVEL_NEXT[level],
+    daysToNextLevel: level === 'gold' ? null : Math.max(0, 3 - streak),
+    todaySteps,
+    todayStatus,
+    history: history.slice(-14),
+  };
+}
+
+export function walkingChallengeToJson(state) {
+  return {
+    level: state.level,
+    streakDays: state.streakDays,
+    target: state.target,
+    nextLevel: state.nextLevel,
+    daysToNextLevel: state.daysToNextLevel,
+    todaySteps: state.todaySteps,
+    todayStatus: state.todayStatus,
+    history: state.history,
+  };
 }
 
 // ------------------------------------------------------------------ shapes

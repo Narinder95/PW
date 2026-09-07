@@ -91,6 +91,21 @@ const specs = <AnimSpec>[
   AnimSpec('meditation', ['assets/journey/pet/meditation'], 30, 8),
   AnimSpec('reading', ['assets/journey/pet/reading'], 30, 8),
   AnimSpec('drinking_water', ['assets/journey/pet/drinking_water'], 30, 8),
+
+  // Full-screen streak-celebration clips, played once on the streak-celebration
+  // page (lib/screens/streak_celebration_screen.dart). Unlike the pet cycles
+  // above these aren't picked by name for a specific occasion: the screen
+  // round-robins across whichever of these actually built, so a folder that is
+  // still empty (a clip not delivered yet) is simply skipped here and never
+  // enters the rotation. Add streak_8, streak_9, ... the same way as more art
+  // arrives — no other code changes needed.
+  AnimSpec('streak_1', ['assets/journey/streak/streak_1'], 30, 10),
+  AnimSpec('streak_2', ['assets/journey/streak/streak_2'], 30, 10),
+  AnimSpec('streak_3', ['assets/journey/streak/streak_3'], 30, 10),
+  AnimSpec('streak_4', ['assets/journey/streak/streak_4'], 30, 10),
+  AnimSpec('streak_5', ['assets/journey/streak/streak_5'], 30, 10),
+  AnimSpec('streak_6', ['assets/journey/streak/streak_6'], 30, 10),
+  AnimSpec('streak_7', ['assets/journey/streak/streak_7'], 30, 10),
 ];
 
 /// Parallax layers keep their exact aspect ratio: the painter derives tile
@@ -102,6 +117,7 @@ const specs = <AnimSpec>[
 /// full-height layers do, and these widths land just under a power of two so
 /// none of the texture allocation is wasted.
 const parallaxSpecs = <String, int>{
+  'background': 1280,
   'sky': 1024,
   'mid': 1280,
   'near': 512,

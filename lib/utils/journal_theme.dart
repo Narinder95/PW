@@ -85,6 +85,12 @@ class JournalTheme {
   Color get incomplete =>
       isDark ? const Color(0xFFEF5350) : const Color(0xFFE57373);
 
+  /// Completed-day green. Pairs tonally with [incomplete] for the radial
+  /// habit tracker, which marks every habit done/missed the same two colours
+  /// rather than each habit's own accent, so all rings read at a glance.
+  Color get complete =>
+      isDark ? const Color(0xFF66BB6A) : const Color(0xFF81C784);
+
   /// A habit's accent, adjusted for the current ground.
   ///
   /// The six habit colours were picked against cream. Deep ones (Steps

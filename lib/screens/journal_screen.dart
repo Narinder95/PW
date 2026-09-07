@@ -2,12 +2,15 @@ import 'package:flutter/material.dart';
 
 import '../models/habit.dart';
 import '../models/habit_catalog.dart';
+import '../models/habit_month_progress.dart';
 import '../services/api/api_exception.dart';
 import '../utils/journal_theme.dart';
 import '../widgets/app_scope.dart';
 import '../widgets/friends/state_panels.dart';
 import '../widgets/habit_card.dart';
+import '../widgets/habit_radial_card.dart';
 import '../widgets/inactive_habit_card.dart';
+import 'streak_celebration_screen.dart';
 
 /// The Journal tab: the signed-in user's own habits for today.
 ///
@@ -32,6 +35,15 @@ class _JournalScreenState extends State<JournalScreen> {
   ApiException? _error;
   bool _loading = true;
 
+  /// First-of-month anchor for the radial progress card. Starts on the
+  /// current month; the card's own arrows step it forward/back a month at a
+  /// time (year never changes directly, only as a side effect of crossing a
+  /// year boundary).
+  DateTime _selectedMonth = DateTime(DateTime.now().year, DateTime.now().month);
+  HabitMonthReport? _monthReport;
+  ApiException? _monthError;
+  bool _monthLoading = true;
+
   /// Catalogue keys with a create in flight, so a double-tap cannot create
   /// the same habit twice.
   final Set<String> _activating = <String>{};
@@ -43,6 +55,7 @@ class _JournalScreenState extends State<JournalScreen> {
     if (identical(_services, services)) return;
     _services = services;
     _load();
+    _loadMonth();
   }
 
   Future<void> _load() async {
@@ -76,6 +89,50 @@ class _JournalScreenState extends State<JournalScreen> {
     }
   }
 
+  Future<void> _loadMonth() async {
+    final services = _services;
+    if (services == null) return;
+    if (!services.auth.isSignedIn) {
+      setState(() {
+        _monthReport = null;
+        _monthLoading = false;
+      });
+      return;
+    }
+
+    setState(() {
+      _monthLoading = true;
+      _monthError = null;
+    });
+    try {
+      final report = await services.api.getHabitsMonth(month: _selectedMonth);
+      if (!mounted) return;
+      setState(() {
+        _monthReport = report;
+        _monthLoading = false;
+      });
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _monthError = error;
+        _monthLoading = false;
+      });
+    }
+  }
+
+  /// Steps the radial card's month forward or back by [delta] months. The
+  /// year is never touched directly — it only moves as a side effect of
+  /// `DateTime` rolling over when a month shift crosses a year boundary.
+  void _shiftMonth(int delta) {
+    setState(() {
+      _selectedMonth = DateTime(_selectedMonth.year, _selectedMonth.month + delta);
+      // The new month's data hasn't arrived yet — showing the previous
+      // month's chart under the new label would misrepresent it.
+      _monthReport = null;
+    });
+    _loadMonth();
+  }
+
   String get _greeting {
     final hour = DateTime.now().hour;
     if (hour < 12) return 'Good morning';
@@ -99,11 +156,23 @@ class _JournalScreenState extends State<JournalScreen> {
         ];
       });
       if (result.justCompleted) {
-        ScaffoldMessenger.of(context)
-          ..hideCurrentSnackBar()
-          ..showSnackBar(
-            SnackBar(content: Text('${habit.name} done for today 🎉')),
+        // A streak of 1 is just today; the full-screen celebration is for an
+        // actual streak (2+ consecutive days). Below that, the snackbar alone
+        // covers "done for today".
+        if (result.habit.streak >= 2) {
+          Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => StreakCelebrationScreen(habit: result.habit),
+              fullscreenDialog: true,
+            ),
           );
+        } else {
+          ScaffoldMessenger.of(context)
+            ..hideCurrentSnackBar()
+            ..showSnackBar(
+              SnackBar(content: Text('${habit.name} done for today 🎉')),
+            );
+        }
       }
     } on ApiException catch (error) {
       if (!mounted) return;
@@ -157,11 +226,13 @@ class _JournalScreenState extends State<JournalScreen> {
         ),
       ),
       body: RefreshIndicator(
-        onRefresh: _load,
+        onRefresh: () => Future.wait([_load(), _loadMonth()]),
         child: ListView(
           padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
           children: [
             _buildGreetingPanel(t),
+            const SizedBox(height: 20),
+            _buildRadialCard(),
             const SizedBox(height: 20),
             ..._buildHabitSection(t),
             const SizedBox(height: 24),
@@ -206,6 +277,19 @@ class _JournalScreenState extends State<JournalScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  // ------------------------------------------------------------ radial card
+  Widget _buildRadialCard() {
+    return HabitRadialCard(
+      report: _monthReport,
+      loading: _monthLoading,
+      error: _monthError,
+      onRetry: _loadMonth,
+      selectedMonth: _selectedMonth,
+      onPrevMonth: () => _shiftMonth(-1),
+      onNextMonth: () => _shiftMonth(1),
     );
   }
 

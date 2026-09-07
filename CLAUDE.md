@@ -119,6 +119,11 @@ and skips itself when no server is running.
    TLS, password reset)
 3. Journey screen features
 4. Analytics
+5. Enable the "HealthKit" capability on the Runner target in Xcode (Signing &
+   Capabilities) before an iOS build — required for the walking challenge's
+   step sync (`lib/services/step_source.dart`). `Info.plist` already carries
+   `NSHealthShareUsageDescription`; only the Xcode-side capability is missing,
+   and that step needs a Mac.
 
 ## Important Notes
 
