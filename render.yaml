@@ -2,6 +2,7 @@ services:
   - type: web
     name: habitpet-api
     runtime: docker
+    rootDir: backend
     dockerfilePath: ./Dockerfile
     plan: free
     envVars:
