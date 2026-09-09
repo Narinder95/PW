@@ -12,7 +12,7 @@ workflows:
     environment:
       ios_signing:
         distribution_type: app_store
-        bundle_identifier: com.example.pw
+        bundle_identifier: com.habitpet.health
     scripts:
       - name: Get Flutter packages
         script: flutter pub get
