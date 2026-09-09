@@ -29,6 +29,16 @@ dev_dependencies:
   # Used only by tool/build_atlases.dart, which runs on the desktop. Keeping it
   # out of dependencies keeps it out of the shipped app.
   image: ^4.0.0
+  # Generates the real app icon from assets/habitpet_logo.png (`dart run
+  # flutter_launcher_icons`), replacing Flutter's default template icon.
+  # Dev-only: it does its work at build-tool time, nothing ships in the app.
+  flutter_launcher_icons: ^0.13.1
+
+flutter_launcher_icons:
+  image_path: assets/habitpet_logo.png
+  android: true
+  ios: true
+  remove_alpha_ios: true
 
 flutter:
   uses-material-design: true
