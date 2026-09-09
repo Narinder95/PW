@@ -10,4 +10,13 @@ services:
         sync: false # set manually in the Render dashboard - it's a secret
       - key: PORT
         value: "8080"
+      - key: PUSH_PROVIDER
+        value: fcm
+      - key: FCM_PROJECT_ID
+        value: habitpet-d53d3
+      - key: FCM_SERVICE_ACCOUNT_FILE
+        value: /etc/secrets/fcm-service-account.json
+        # The file itself is a Render "Secret File" (Environment tab -> Secret
+        # Files), not a plain env var - it's the private key that lets the
+        # backend send pushes and must never go in git (see docs/PUSH_SETUP.md).
     healthCheckPath: /api/health
