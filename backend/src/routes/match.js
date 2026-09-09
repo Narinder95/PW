@@ -7,14 +7,18 @@ import {
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 50;
 
-function searchResult(db, meId, row) {
+async function searchResult(db, meId, row) {
+  const [mutualFriends, relationship] = await Promise.all([
+    mutualFriendCount(db, meId, row.id),
+    relationshipTo(db, meId, row.id),
+  ]);
   return {
     id: row.id,
     username: row.username,
     name: row.name,
     avatarColor: row.avatar_color,
-    mutualFriends: mutualFriendCount(db, meId, row.id),
-    relationship: relationshipTo(db, meId, row.id),
+    mutualFriends,
+    relationship,
   };
 }
 
@@ -28,7 +32,7 @@ export function registerMatchRoutes(router, ctx) {
     const limit = parseLimit(url.searchParams.get('limit'), DEFAULT_LIMIT, MAX_LIMIT);
 
     const like = `%${q.toLowerCase().replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
-    const rows = db
+    const rows = await db
       .prepare(
         `SELECT * FROM users
           WHERE id != ?
@@ -38,17 +42,18 @@ export function registerMatchRoutes(router, ctx) {
       )
       .all(me.id, like, like, limit);
 
-    sendJson(res, 200, { users: rows.map((r) => searchResult(db, me.id, r)) });
+    const users = await Promise.all(rows.map((r) => searchResult(db, me.id, r)));
+    sendJson(res, 200, { users });
   }, { auth: true });
 
   router.get('/api/match/suggestions', async ({ res, url, me }) => {
     const limit = parseLimit(url.searchParams.get('limit'), DEFAULT_LIMIT, MAX_LIMIT);
     const date = todayISO();
-    const myStreak = userStreak(db, me.id, date);
+    const myStreak = await userStreak(db, me.id, date);
 
     // Everyone who is not me, not already a friend, and has no pending request
     // in either direction.
-    const candidates = db
+    const candidates = await db
       .prepare(
         `SELECT * FROM users u
           WHERE u.id != ?
@@ -62,23 +67,25 @@ export function registerMatchRoutes(router, ctx) {
       )
       .all(me.id, me.id, me.id, me.id);
 
-    const suggestions = candidates
-      .map((row) => {
-        const shared = sharedHabitNames(db, me.id, row.id);
-        const mutual = mutualFriendCount(db, me.id, row.id);
-        const score = matchScore({
-          sharedHabits: shared.length,
-          mutualFriends: mutual,
-          myStreak,
-          theirStreak: userStreak(db, row.id, date),
-        });
-        return {
-          user: searchResult(db, me.id, row),
-          sharedHabits: shared,
-          matchScore: score,
-          reason: matchReason(shared.length, mutual),
-        };
-      })
+    const suggestions = (await Promise.all(candidates.map(async (row) => {
+      const [shared, mutual, theirStreak] = await Promise.all([
+        sharedHabitNames(db, me.id, row.id),
+        mutualFriendCount(db, me.id, row.id),
+        userStreak(db, row.id, date),
+      ]);
+      const score = matchScore({
+        sharedHabits: shared.length,
+        mutualFriends: mutual,
+        myStreak,
+        theirStreak,
+      });
+      return {
+        user: await searchResult(db, me.id, row),
+        sharedHabits: shared,
+        matchScore: score,
+        reason: matchReason(shared.length, mutual),
+      };
+    })))
       // matchScore desc, then username asc - fully deterministic.
       .sort((a, b) => b.matchScore - a.matchScore || a.user.username.localeCompare(b.user.username))
       .slice(0, limit);

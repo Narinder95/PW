@@ -52,11 +52,7 @@ class ApiConfig {
   static List<String> get candidates {
     if (kIsWeb) return const <String>[_hostDefault];
     if (defaultTargetPlatform == TargetPlatform.android) {
-      return const <String>[
-        _hostDefault,
-        _androidDefault,
-        'http://192.168.1.3:8080',
-        ];
+      return const <String>[_hostDefault, _androidDefault];
     }
     return const <String>[_hostDefault];
   }

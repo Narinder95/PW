@@ -88,48 +88,61 @@ export class PushDispatcher {
     };
   }
 
-  unreadCount(userId) {
-    const row = this.db
+  async unreadCount(userId) {
+    const row = await this.db
       .prepare('SELECT COUNT(*) AS n FROM notifications WHERE user_id = ? AND read = 0')
       .get(userId);
-    return row ? row.n : 0;
+    return row ? Number(row.n) : 0;
   }
 
   /**
    * Enqueue one push per registered device of `notification.user_id`.
-   * Synchronous bookkeeping, asynchronous sending. Always safe to call.
+   *
+   * Callers never `await` this - it stays a synchronous-looking, fire-and-
+   * forget call (the bookkeeping below is genuinely async against Postgres,
+   * but its own promise chain is caught right here so it can never reject
+   * into, or block, the API request that created the notification).
+   *
+   * The bookkeeping promise is tracked in `inFlight` *synchronously*, before
+   * any of it has actually run: `_dispatch` doesn't reach a `track()` call
+   * for the individual per-device sends until after its own first `await`
+   * (the device lookup) resolves, so without this, `idle()` called right
+   * after `dispatch()` could see an empty `inFlight` and return immediately,
+   * before the device lookup - let alone any send - had even started.
    */
   dispatch(notification) {
     if (this.closed) return;
-    try {
-      const devices = this.db
-        .prepare('SELECT * FROM devices WHERE user_id = ? ORDER BY created_at ASC, id ASC')
-        .all(notification.user_id);
-      if (devices.length === 0) return; // clean no-op
-
-      const badge = this.unreadCount(notification.user_id);
-      const insert = this.db.prepare(
-        `INSERT INTO push_deliveries
-           (id, user_id, device_id, notification_id, provider, status, error, created_at)
-         VALUES (?, ?, ?, ?, ?, 'queued', NULL, ?)`
-      );
-
-      for (const device of devices) {
-        const deliveryId = newId('pd');
-        insert.run(
-          deliveryId,
-          notification.user_id,
-          device.id,
-          notification.id,
-          this.provider.name,
-          nowISO()
-        );
-        const payload = this.buildPayload(device, notification, badge);
-        this.track(this.deliver(deliveryId, device, payload));
-      }
-    } catch (err) {
-      // Bookkeeping itself failed - log and swallow. The API call must survive.
+    const bookkeeping = this._dispatch(notification).catch((err) => {
       this.logger.error('[push] dispatch bookkeeping failed:', err.message);
+    });
+    this.track(bookkeeping);
+  }
+
+  async _dispatch(notification) {
+    const devices = await this.db
+      .prepare('SELECT * FROM devices WHERE user_id = ? ORDER BY created_at ASC, id ASC')
+      .all(notification.user_id);
+    if (devices.length === 0) return; // clean no-op
+
+    const badge = await this.unreadCount(notification.user_id);
+    const insert = this.db.prepare(
+      `INSERT INTO push_deliveries
+         (id, user_id, device_id, notification_id, provider, status, error, created_at)
+       VALUES (?, ?, ?, ?, ?, 'queued', NULL, ?)`
+    );
+
+    for (const device of devices) {
+      const deliveryId = newId('pd');
+      await insert.run(
+        deliveryId,
+        notification.user_id,
+        device.id,
+        notification.id,
+        this.provider.name,
+        nowISO()
+      );
+      const payload = this.buildPayload(device, notification, badge);
+      this.track(this.deliver(deliveryId, device, payload));
     }
   }
 
@@ -169,19 +182,19 @@ export class PushDispatcher {
     if (last.status === 'invalid_token') {
       // Dead token - self-clean so we stop pushing into the void.
       try {
-        this.db.prepare('DELETE FROM devices WHERE id = ?').run(device.id);
+        await this.db.prepare('DELETE FROM devices WHERE id = ?').run(device.id);
       } catch (err) {
         this.logger.error('[push] could not delete dead device:', err.message);
       }
     }
 
-    this.finish(deliveryId, last);
+    await this.finish(deliveryId, last);
     return last;
   }
 
-  finish(deliveryId, result) {
+  async finish(deliveryId, result) {
     try {
-      this.db
+      await this.db
         .prepare('UPDATE push_deliveries SET status = ?, error = ? WHERE id = ?')
         .run(result.status, result.error ?? null, deliveryId);
     } catch (err) {

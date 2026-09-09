@@ -1,5 +1,7 @@
 // Shared domain computations + row -> contract-shape mappers.
-// Everything here is pure w.r.t. the DB (reads only) and fully deterministic.
+// Everything here is read-only w.r.t. the DB and fully deterministic. Every
+// function that touches `db` is `async` now that the DB layer is Postgres
+// (see db.js) rather than the synchronous node:sqlite it started on.
 
 // ------------------------------------------------------------------- dates
 // Day-granularity everywhere is UTC, so the server behaves the same wherever
@@ -54,49 +56,50 @@ export function userStub(row) {
   return { id: row.id, username: row.username, name: row.name, avatarColor: row.avatar_color };
 }
 
-export function getUser(db, id) {
-  return db.prepare('SELECT * FROM users WHERE id = ?').get(id) ?? null;
+export async function getUser(db, id) {
+  return (await db.prepare('SELECT * FROM users WHERE id = ?').get(id)) ?? null;
 }
 
 // --------------------------------------------------------------- friendship
 
-export function areFriends(db, a, b) {
-  const row = db.prepare('SELECT 1 AS x FROM friendships WHERE user_id = ? AND friend_id = ?').get(a, b);
+export async function areFriends(db, a, b) {
+  const row = await db.prepare('SELECT 1 AS x FROM friendships WHERE user_id = ? AND friend_id = ?').get(a, b);
   return !!row;
 }
 
-export function friendIds(db, userId) {
-  return db.prepare('SELECT friend_id FROM friendships WHERE user_id = ?').all(userId).map((r) => r.friend_id);
+export async function friendIds(db, userId) {
+  const rows = await db.prepare('SELECT friend_id FROM friendships WHERE user_id = ?').all(userId);
+  return rows.map((r) => r.friend_id);
 }
 
-export function mutualFriendCount(db, a, b) {
-  const row = db
+export async function mutualFriendCount(db, a, b) {
+  const row = await db
     .prepare(
       `SELECT COUNT(*) AS n FROM friendships f1
          JOIN friendships f2 ON f1.friend_id = f2.friend_id
         WHERE f1.user_id = ? AND f2.user_id = ?`
     )
     .get(a, b);
-  return row ? row.n : 0;
+  return row ? Number(row.n) : 0;
 }
 
-export function addFriendship(db, a, b, at) {
+export async function addFriendship(db, a, b, at) {
   const stmt = db.prepare(
     'INSERT INTO friendships (user_id, friend_id, created_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING'
   );
-  stmt.run(a, b, at);
-  stmt.run(b, a, at);
+  await stmt.run(a, b, at);
+  await stmt.run(b, a, at);
 }
 
 /** relationship: self | friend | request_sent | request_received | none */
-export function relationshipTo(db, meId, otherId) {
+export async function relationshipTo(db, meId, otherId) {
   if (meId === otherId) return 'self';
-  if (areFriends(db, meId, otherId)) return 'friend';
-  const sent = db
+  if (await areFriends(db, meId, otherId)) return 'friend';
+  const sent = await db
     .prepare("SELECT 1 AS x FROM friend_requests WHERE from_user_id = ? AND to_user_id = ? AND status = 'pending'")
     .get(meId, otherId);
   if (sent) return 'request_sent';
-  const received = db
+  const received = await db
     .prepare("SELECT 1 AS x FROM friend_requests WHERE from_user_id = ? AND to_user_id = ? AND status = 'pending'")
     .get(otherId, meId);
   if (received) return 'request_received';
@@ -105,23 +108,23 @@ export function relationshipTo(db, meId, otherId) {
 
 // ------------------------------------------------------------------ habits
 
-export function getHabit(db, id) {
-  return db.prepare('SELECT * FROM habits WHERE id = ?').get(id) ?? null;
+export async function getHabit(db, id) {
+  return (await db.prepare('SELECT * FROM habits WHERE id = ?').get(id)) ?? null;
 }
 
-export function listHabitRows(db, userId) {
+export async function listHabitRows(db, userId) {
   return db.prepare('SELECT * FROM habits WHERE user_id = ? ORDER BY created_at ASC, id ASC').all(userId);
 }
 
-export function progressFor(db, habitId, date) {
-  const row = db.prepare('SELECT progress FROM habit_logs WHERE habit_id = ? AND date = ?').get(habitId, date);
+export async function progressFor(db, habitId, date) {
+  const row = await db.prepare('SELECT progress FROM habit_logs WHERE habit_id = ? AND date = ?').get(habitId, date);
   return row ? row.progress : 0;
 }
 
 /** 7 booleans, oldest first, index 6 === `endDate`. */
-export function habitWeekData(db, habitId, target, endDate) {
+export async function habitWeekData(db, habitId, target, endDate) {
   const start = addDays(endDate, -6);
-  const rows = db
+  const rows = await db
     .prepare('SELECT date, progress FROM habit_logs WHERE habit_id = ? AND date >= ? AND date <= ?')
     .all(habitId, start, endDate);
   const byDate = new Map(rows.map((r) => [r.date, r.progress]));
@@ -140,8 +143,8 @@ const MAX_STREAK_LOOKBACK = 400;
  * complete yet, the streak is counted back from the day before (so an
  * in-progress today does not zero out yesterday's streak).
  */
-export function habitStreak(db, habitId, target, endDate) {
-  const rows = db
+export async function habitStreak(db, habitId, target, endDate) {
+  const rows = await db
     .prepare('SELECT date FROM habit_logs WHERE habit_id = ? AND progress >= ? AND date <= ?')
     .all(habitId, target, endDate);
   return walkStreak(new Set(rows.map((r) => r.date)), endDate);
@@ -169,11 +172,11 @@ export function daysInMonth(month) {
  * that already happened), or `null` for a day before `createdAt` or after
  * `todayDate` — no data to report, distinct from a miss.
  */
-export function habitMonthData(db, habitId, target, createdAt, month, todayDate) {
+export async function habitMonthData(db, habitId, target, createdAt, month, todayDate) {
   const total = daysInMonth(month);
   const first = `${month}-01`;
   const last = `${month}-${String(total).padStart(2, '0')}`;
-  const rows = db
+  const rows = await db
     .prepare('SELECT date, progress FROM habit_logs WHERE habit_id = ? AND date >= ? AND date <= ?')
     .all(habitId, first, last);
   const byDate = new Map(rows.map((r) => [r.date, r.progress]));
@@ -199,11 +202,11 @@ export function habitMonthData(db, habitId, target, createdAt, month, todayDate)
  * an unlogged past day — there is no real number to show for it, so it must
  * read as "no data" rather than "0 logged".
  */
-export function habitMonthProgressData(db, habitId, month) {
+export async function habitMonthProgressData(db, habitId, month) {
   const total = daysInMonth(month);
   const first = `${month}-01`;
   const last = `${month}-${String(total).padStart(2, '0')}`;
-  const rows = db
+  const rows = await db
     .prepare('SELECT date, progress FROM habit_logs WHERE habit_id = ? AND date >= ? AND date <= ?')
     .all(habitId, first, last);
   const byDate = new Map(rows.map((r) => [r.date, r.progress]));
@@ -216,8 +219,12 @@ export function habitMonthProgressData(db, habitId, month) {
 }
 
 /** Habit shape from the contract (own habit). */
-export function habitToJson(db, row, date) {
-  const progress = progressFor(db, row.id, date);
+export async function habitToJson(db, row, date) {
+  const [progress, weekData, streak] = await Promise.all([
+    progressFor(db, row.id, date),
+    habitWeekData(db, row.id, row.target, date),
+    habitStreak(db, row.id, row.target, date),
+  ]);
   return {
     id: row.id,
     name: row.name,
@@ -226,15 +233,15 @@ export function habitToJson(db, row, date) {
     target: row.target,
     unit: row.unit,
     progress,
-    weekData: habitWeekData(db, row.id, row.target, date),
-    streak: habitStreak(db, row.id, row.target, date),
+    weekData,
+    streak,
     completedToday: progress >= row.target,
   };
 }
 
 /** FriendHabit shape (read-only view of someone else's habit). */
-export function friendHabitToJson(db, row, date) {
-  const progress = progressFor(db, row.id, date);
+export async function friendHabitToJson(db, row, date) {
+  const progress = await progressFor(db, row.id, date);
   let status = 'not_started';
   if (progress >= row.target) status = 'completed';
   else if (progress > 0) status = 'in_progress';
@@ -256,10 +263,11 @@ export function friendHabitToJson(db, row, date) {
  * Every date <= endDate on which the user completed ALL of their habits.
  * A user with zero habits has no complete days at all.
  */
-function userCompleteDates(db, userId, endDate) {
-  const total = db.prepare('SELECT COUNT(*) AS n FROM habits WHERE user_id = ?').get(userId).n;
+async function userCompleteDates(db, userId, endDate) {
+  const countRow = await db.prepare('SELECT COUNT(*) AS n FROM habits WHERE user_id = ?').get(userId);
+  const total = Number(countRow.n);
   if (total === 0) return new Set();
-  const rows = db
+  const rows = await db
     .prepare(
       `SELECT hl.date AS date
          FROM habit_logs hl
@@ -273,22 +281,24 @@ function userCompleteDates(db, userId, endDate) {
 }
 
 /** streakDays: consecutive all-habits-complete days ending today (or yesterday). */
-export function userStreak(db, userId, endDate) {
-  return walkStreak(userCompleteDates(db, userId, endDate), endDate);
+export async function userStreak(db, userId, endDate) {
+  return walkStreak(await userCompleteDates(db, userId, endDate), endDate);
 }
 
 /** 7 booleans of "completed every habit that day", oldest first. */
-export function userWeekData(db, userId, endDate) {
-  const complete = userCompleteDates(db, userId, endDate);
+export async function userWeekData(db, userId, endDate) {
+  const complete = await userCompleteDates(db, userId, endDate);
   const out = [];
   for (let i = 6; i >= 0; i--) out.push(complete.has(addDays(endDate, -i)));
   return out;
 }
 
-export function userDayStats(db, userId, date) {
-  const habits = listHabitRows(db, userId);
+export async function userDayStats(db, userId, date) {
+  const habits = await listHabitRows(db, userId);
   let completed = 0;
-  for (const h of habits) if (progressFor(db, h.id, date) >= h.target) completed += 1;
+  for (const h of habits) {
+    if ((await progressFor(db, h.id, date)) >= h.target) completed += 1;
+  }
   const total = habits.length;
   return {
     habitsTotal: total,
@@ -302,18 +312,22 @@ function round4(n) {
 }
 
 /** FriendSummary shape. Also used for the caller's own stats in /compare. */
-export function friendSummary(db, userRow, date) {
-  const stats = userDayStats(db, userRow.id, date);
+export async function friendSummary(db, userRow, date) {
+  const [stats, streakDays, weekData] = await Promise.all([
+    userDayStats(db, userRow.id, date),
+    userStreak(db, userRow.id, date),
+    userWeekData(db, userRow.id, date),
+  ]);
   return {
     id: userRow.id,
     username: userRow.username,
     name: userRow.name,
     avatarColor: userRow.avatar_color,
-    streakDays: userStreak(db, userRow.id, date),
+    streakDays,
     completionPercentage: stats.completionPercentage,
     habitsCompleted: stats.habitsCompleted,
     habitsTotal: stats.habitsTotal,
-    weekData: userWeekData(db, userRow.id, date),
+    weekData,
     lastActiveAt: userRow.last_active_at,
   };
 }
@@ -337,9 +351,13 @@ export function ratio(progress, target) {
   return Math.min(1, progress / target);
 }
 
-export function buildComparison(db, meRow, friendRow, date) {
-  const mine = habitsByName(listHabitRows(db, meRow.id));
-  const theirs = habitsByName(listHabitRows(db, friendRow.id));
+export async function buildComparison(db, meRow, friendRow, date) {
+  const [mineRows, theirsRows] = await Promise.all([
+    listHabitRows(db, meRow.id),
+    listHabitRows(db, friendRow.id),
+  ]);
+  const mine = habitsByName(mineRows);
+  const theirs = habitsByName(theirsRows);
 
   const habits = [];
   let myScore = 0;
@@ -348,8 +366,10 @@ export function buildComparison(db, meRow, friendRow, date) {
   for (const [key, myHabit] of mine) {
     const theirHabit = theirs.get(key);
     if (!theirHabit) continue;
-    const myProgress = progressFor(db, myHabit.id, date);
-    const friendProgress = progressFor(db, theirHabit.id, date);
+    const [myProgress, friendProgress] = await Promise.all([
+      progressFor(db, myHabit.id, date),
+      progressFor(db, theirHabit.id, date),
+    ]);
     const myRatio = ratio(myProgress, myHabit.target);
     const friendRatio = ratio(friendProgress, theirHabit.target);
     let winner = 'tie';
@@ -377,20 +397,25 @@ export function buildComparison(db, meRow, friendRow, date) {
   if (myScore > friendScore) verdict = 'me_ahead';
   else if (friendScore > myScore) verdict = 'friend_ahead';
 
+  const [myStreak, friendStreak] = await Promise.all([
+    userStreak(db, meRow.id, date),
+    userStreak(db, friendRow.id, date),
+  ]);
+
   return {
     me: {
       id: meRow.id,
       name: meRow.name,
       avatarColor: meRow.avatar_color,
       score: myScore,
-      streakDays: userStreak(db, meRow.id, date),
+      streakDays: myStreak,
     },
     friend: {
       id: friendRow.id,
       name: friendRow.name,
       avatarColor: friendRow.avatar_color,
       score: friendScore,
-      streakDays: userStreak(db, friendRow.id, date),
+      streakDays: friendStreak,
     },
     habits,
     sharedHabitCount: habits.length,
@@ -401,9 +426,10 @@ export function buildComparison(db, meRow, friendRow, date) {
 // ------------------------------------------------------------------ match
 
 /** Habit names two users share (case-insensitive), returned in the caller's casing. */
-export function sharedHabitNames(db, meId, otherId) {
-  const mine = habitsByName(listHabitRows(db, meId));
-  const theirs = habitsByName(listHabitRows(db, otherId));
+export async function sharedHabitNames(db, meId, otherId) {
+  const [mineRows, theirsRows] = await Promise.all([listHabitRows(db, meId), listHabitRows(db, otherId)]);
+  const mine = habitsByName(mineRows);
+  const theirs = habitsByName(theirsRows);
   const out = [];
   for (const [key, habit] of mine) if (theirs.has(key)) out.push(habit.name);
   return out.sort((a, b) => a.localeCompare(b));
@@ -452,12 +478,15 @@ function targetForLevel(level) {
  * sync gap is not proof the user fell short. Only a day with an actual
  * synced value under 80% of that day's target demotes.
  */
-export function walkingChallengeState(db, userId, todayDate) {
+export async function walkingChallengeState(db, userId, todayDate) {
   const yesterday = addDays(todayDate, -1);
   const start = addDays(yesterday, -(MAX_WALK_LOOKBACK - 1));
-  const rows = db
-    .prepare('SELECT date, steps FROM daily_steps WHERE user_id = ? AND date >= ? AND date <= ? ORDER BY date ASC')
-    .all(userId, start, yesterday);
+  const [rows, todayRow] = await Promise.all([
+    db
+      .prepare('SELECT date, steps FROM daily_steps WHERE user_id = ? AND date >= ? AND date <= ? ORDER BY date ASC')
+      .all(userId, start, yesterday),
+    db.prepare('SELECT steps FROM daily_steps WHERE user_id = ? AND date = ?').get(userId, todayDate),
+  ]);
   const stepsByDate = new Map(rows.map((r) => [r.date, r.steps]));
 
   let level = 'none';
@@ -468,7 +497,7 @@ export function walkingChallengeState(db, userId, todayDate) {
     const hasRow = stepsByDate.has(cursor);
     const steps = stepsByDate.get(cursor) ?? 0;
     const target = targetForLevel(level);
-    const ratio = target > 0 ? steps / target : 0;
+    const stepRatio = target > 0 ? steps / target : 0;
     let status;
     if (steps >= target) {
       status = 'met';
@@ -477,7 +506,7 @@ export function walkingChallengeState(db, userId, todayDate) {
         level = LEVEL_NEXT[level];
         streak = 0;
       }
-    } else if (ratio >= 0.8) {
+    } else if (stepRatio >= 0.8) {
       status = 'warning'; // frozen: streak unchanged
     } else if (!hasRow) {
       status = 'no_data'; // frozen: streak unchanged, never demotes
@@ -491,7 +520,6 @@ export function walkingChallengeState(db, userId, todayDate) {
   }
 
   const target = targetForLevel(level);
-  const todayRow = db.prepare('SELECT steps FROM daily_steps WHERE user_id = ? AND date = ?').get(userId, todayDate);
   const todaySteps = todayRow ? todayRow.steps : 0;
   const todayRatio = target > 0 ? todaySteps / target : 0;
   const todayStatus = todaySteps >= target ? 'met' : todayRatio >= 0.8 ? 'warning' : todayRow ? 'shortfall' : 'no_data';
@@ -573,15 +601,18 @@ export function activityToJson(row) {
   };
 }
 
-export function friendRequestToJson(db, row) {
-  const from = getUser(db, row.from_user_id);
-  const to = getUser(db, row.to_user_id);
+export async function friendRequestToJson(db, row) {
+  const [from, to, mutualFriends] = await Promise.all([
+    getUser(db, row.from_user_id),
+    getUser(db, row.to_user_id),
+    mutualFriendCount(db, row.from_user_id, row.to_user_id),
+  ]);
   return {
     id: row.id,
     fromUser: from ? userStub(from) : null,
     toUser: to ? userStub(to) : null,
     status: row.status,
-    mutualFriends: mutualFriendCount(db, row.from_user_id, row.to_user_id),
+    mutualFriends,
     createdAt: row.created_at,
     respondedAt: row.responded_at ?? null,
   };

@@ -215,7 +215,7 @@ test('password hashing', async (t) => {
     const app = await makeApp();
     try {
       const u = await makeUser(app, { password: 'sup3rSecretValue' });
-      const row = app.db.prepare('SELECT * FROM users WHERE id = ?').get(u.id);
+      const row = await app.db.prepare('SELECT * FROM users WHERE id = ?').get(u.id);
       assert.ok(!JSON.stringify(row).includes('sup3rSecretValue'));
       assert.match(row.password_hash, /^[0-9a-f]{32}:[0-9a-f]{128}$/);
     } finally {

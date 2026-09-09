@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../models/app_notification.dart';
@@ -52,6 +54,8 @@ class AppServices {
   /// well as on change, and clears it once handled.
   final ValueNotifier<bool> pendingNudgeFocus = ValueNotifier<bool>(false);
 
+  StreamSubscription<AppNotification>? _liveUpdates;
+
   AppServices({
     required this.client,
     required this.api,
@@ -61,7 +65,43 @@ class AppServices {
     required this.push,
     required this.walkingChallenge,
     required this.navigatorKey,
-  });
+  }) {
+    // Keeps the Friends tab's cached lists (nudges, requests, activity, the
+    // friends list itself) live off the same SSE stream that already drives
+    // the notification bell, instead of only updating on a manual
+    // pull-to-refresh or a screen re-visit.
+    //
+    // The SSE `notification` payload is a thin, generic envelope (title,
+    // body, actor, ref) — nowhere near enough to build a full Nudge,
+    // FriendRequest or Friend object by hand. So rather than guess at one
+    // from partial data, a relevant type triggers a real re-fetch of just
+    // the affected section, which is cheap and always exactly correct.
+    _liveUpdates = notifications.onNotification.listen(_onLiveNotification);
+  }
+
+  void _onLiveNotification(AppNotification notification) {
+    switch (notification.type) {
+      case NotificationType.nudge:
+      case NotificationType.cheer:
+      case NotificationType.nudgeAccepted:
+        unawaited(friends.loadNudges());
+        break;
+      case NotificationType.friendRequest:
+        unawaited(friends.loadRequests());
+        break;
+      case NotificationType.friendRequestAccepted:
+        unawaited(friends.loadRequests());
+        unawaited(friends.loadFriends());
+        break;
+      case NotificationType.friendActivity:
+        unawaited(friends.loadActivity());
+        break;
+      case NotificationType.streakMilestone:
+      case NotificationType.matchSuggestion:
+      case NotificationType.unknown:
+        break;
+    }
+  }
 
   /// The configured backend base URL, for the "can't reach the server" panel.
   String get baseUrl => client.config.baseUrl;
@@ -148,6 +188,7 @@ class AppServices {
   }
 
   void dispose() {
+    unawaited(_liveUpdates?.cancel());
     tab.dispose();
     pendingNudgeFocus.dispose();
     notifications.dispose();

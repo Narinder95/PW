@@ -1,32 +1,32 @@
-// Entrypoint: open the file-backed DB and listen.
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+// Entrypoint: open the Postgres-backed DB and listen.
 import { openDb } from './db.js';
 import { createServer, API_VERSION } from './server.js';
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-export const DEFAULT_DB_PATH = path.resolve(here, '..', 'data', 'pw.db');
+const databaseUrl = process.env.DATABASE_URL;
+if (!databaseUrl) {
+  console.error('DATABASE_URL is not set. See backend/.env (gitignored) for local development.');
+  process.exit(1);
+}
 
-const dbPath = process.env.PW_DB_PATH ? path.resolve(process.env.PW_DB_PATH) : DEFAULT_DB_PATH;
 const port = Number(process.env.PORT ?? 8080);
 const host = process.env.HOST ?? '0.0.0.0'; // 0.0.0.0 so 10.0.2.2 works from the Android emulator
 
-const db = openDb(dbPath);
+const db = await openDb(databaseUrl);
 const server = createServer(db);
 
 server.listen(port, host, () => {
   const { port: actual } = server.address();
   console.log(`PW API v${API_VERSION} listening on http://${host}:${actual}`);
-  console.log(`  db            ${dbPath}`);
+  console.log(`  db            Postgres (${new URL(databaseUrl).host})`);
   console.log(`  push provider ${server.provider.name}`);
   console.log(`  emulator      http://10.0.2.2:${actual}`);
 });
 
 function shutdown(signal) {
   console.log(`\n${signal} received, shutting down.`);
-  server.close(() => {
+  server.close(async () => {
     try {
-      db.close();
+      await db.close();
     } catch {
       /* already closed */
     }

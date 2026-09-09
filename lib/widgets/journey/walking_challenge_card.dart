@@ -311,19 +311,32 @@ class _WarningBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final demoted = challenge.todayStatus == DayStepStatus.shortfall ||
-        (challenge.history.isNotEmpty &&
-            challenge.history.last.status == DayStepStatus.shortfall);
+    // Only a committed day (yesterday or earlier) can have actually cost a
+    // streak level. `todayStatus` is a live preview that keeps changing as
+    // more steps come in, so a shortfall there is a still-fixable risk, not
+    // a demotion that already happened.
+    final alreadyDemoted = challenge.history.isNotEmpty &&
+        challenge.history.last.status == DayStepStatus.shortfall;
+    final todayAtRisk = challenge.todayStatus == DayStepStatus.shortfall;
 
-    final message = demoted
-        ? "You fell short of yesterday's goal by more than 20% — your streak dropped a level."
-        : "Close call — you're under this level's goal. One more short day and you'll drop a level.";
+    final String icon;
+    final String message;
+    final Color color;
+    if (alreadyDemoted) {
+      icon = '⬇️';
+      message = "You fell short of yesterday's goal by more than 20% — your streak dropped a level.";
+      color = const Color(0xFFEF4444);
+    } else if (todayAtRisk) {
+      icon = '⚠️';
+      message = "You're behind today's goal by more than 20% — keep going or your streak will drop a level.";
+      color = const Color(0xFFEF4444);
+    } else {
+      icon = '⚠️';
+      message = "Close call — you're under this level's goal. One more short day and you'll drop a level.";
+      color = const Color(0xFFF59E0B);
+    }
 
-    return _Banner(
-      icon: demoted ? '⬇️' : '⚠️',
-      message: message,
-      color: demoted ? const Color(0xFFEF4444) : const Color(0xFFF59E0B),
-    );
+    return _Banner(icon: icon, message: message, color: color);
   }
 }
 

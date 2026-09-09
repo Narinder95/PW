@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: habitpet-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    envVars:
+      - key: DATABASE_URL
+        sync: false # set manually in the Render dashboard - it's a secret
+      - key: PORT
+        value: "8080"
+    healthCheckPath: /api/health

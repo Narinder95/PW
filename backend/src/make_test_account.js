@@ -12,13 +12,14 @@
 //
 // Idempotent: re-running refreshes rather than duplicating.
 
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { openDb } from './db.js';
 import { createSession } from './auth.js';
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-const dbPath = process.env.PW_DB_PATH ?? path.join(here, '..', 'data', 'pw.db');
+const databaseUrl = process.env.DATABASE_URL;
+if (!databaseUrl) {
+  console.error('DATABASE_URL is not set. See backend/.env (gitignored) for local development.');
+  process.exit(1);
+}
 const BASE = process.env.PW_BASE_URL ?? 'http://localhost:8080';
 
 const args = process.argv.slice(2);
@@ -72,13 +73,13 @@ function dayOffset(n) {
   return d.toISOString().slice(0, 10);
 }
 
-const db = openDb(dbPath);
+const db = await openDb(databaseUrl);
 
 // Every account seed.js creates, so none of them is ever mistaken for the
 // handset's own account.
 const SEEDED = new Set([...FRIENDS, REQUESTER, STRANGER, 'devong']);
 
-function recentAccounts(limit = 10) {
+async function recentAccounts(limit = 10) {
   return db
     .prepare('SELECT id, username, name, is_anonymous, created_at FROM users ORDER BY created_at DESC, id DESC LIMIT ?')
     .all(limit);
@@ -86,38 +87,41 @@ function recentAccounts(limit = 10) {
 
 if (listOnly) {
   console.log('Recent accounts (newest first):\n');
-  for (const u of recentAccounts(60).filter((u) => !/^ztest\d+$/.test(u.username)).slice(0, 15)) {
+  const recent = await recentAccounts(60);
+  for (const u of recent.filter((u) => !/^ztest\d+$/.test(u.username)).slice(0, 15)) {
     const tag = u.is_anonymous ? 'anonymous' : 'linked';
     const seeded = SEEDED.has(u.username) ? ' [seed]' : '';
     console.log(`  ${u.username.padEnd(22)} ${tag.padEnd(10)} ${u.created_at}${seeded}`);
   }
+  await db.close();
   process.exit(0);
 }
 
 // Pick the target account.
 let target;
 if (wantedHandle) {
-  target = db.prepare('SELECT * FROM users WHERE username = ?').get(wantedHandle.toLowerCase());
+  target = await db.prepare('SELECT * FROM users WHERE username = ?').get(wantedHandle.toLowerCase());
   if (!target) {
     console.error(`No account with handle "${wantedHandle}". Try --list.`);
+    await db.close();
     process.exit(1);
   }
 } else {
   // Newest non-seed, non-ephemeral account: the one the app just provisioned.
   // `ztest*` rows are throwaway accounts left by the Flutter live tests and
   // would otherwise shadow the real handset account.
-  target = recentAccounts(60).find(
-    (u) => !SEEDED.has(u.username) && !/^ztest\d+$/.test(u.username)
-  );
-  if (!target) {
+  const recent = await recentAccounts(60);
+  const found = recent.find((u) => !SEEDED.has(u.username) && !/^ztest\d+$/.test(u.username));
+  if (!found) {
     console.error(
       'No non-seed account found.\n' +
         'Open the app once so it provisions an account, then re-run this.\n' +
         'Or pass --handle <username>. Use --list to see what exists.'
     );
+    await db.close();
     process.exit(1);
   }
-  target = db.prepare('SELECT * FROM users WHERE id = ?').get(target.id);
+  target = await db.prepare('SELECT * FROM users WHERE id = ?').get(found.id);
 }
 
 async function main() {
@@ -126,7 +130,7 @@ async function main() {
 
   // Mint a session for the target directly — we cannot log in as an anonymous
   // account (by design: it has no password), and this is a dev-only script.
-  const token = createSession(db, target.id);
+  const token = await createSession(db, target.id);
   const me = {
     id: target.id,
     username: target.username,
@@ -272,7 +276,11 @@ async function main() {
   console.log('='.repeat(58) + '\n');
 }
 
-main().catch((err) => {
+try {
+  await main();
+} catch (err) {
   console.error('\n' + err.message + '\n');
-  process.exit(1);
-});
+  process.exitCode = 1;
+} finally {
+  await db.close();
+}

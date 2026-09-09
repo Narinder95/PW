@@ -8,11 +8,14 @@
     "node": ">=24.0.0"
   },
   "scripts": {
-    "start": "node src/index.js",
-    "dev": "node --watch src/index.js",
-    "test": "node --test test/*.test.js",
-    "seed": "node src/seed.js",
-    "test-account": "node src/make_test_account.js",
-    "purge": "node src/purge_test_users.js"
+    "start": "node --env-file-if-exists=.env src/index.js",
+    "dev": "node --env-file-if-exists=.env --watch src/index.js",
+    "test": "node --env-file-if-exists=.env --test test/*.test.js",
+    "seed": "node --env-file-if-exists=.env src/seed.js",
+    "test-account": "node --env-file-if-exists=.env src/make_test_account.js",
+    "purge": "node --env-file-if-exists=.env src/purge_test_users.js"
+  },
+  "dependencies": {
+    "pg": "^8.23.0"
   }
 }

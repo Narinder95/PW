@@ -6,6 +6,7 @@
 import crypto from 'node:crypto';
 import { ApiError, newId, nowISO, requireString, normalizeColor, sendJson, sendNoContent } from './http.js';
 import { avatarColorFor, publicUser, privateUser } from './domain.js';
+import { UNIQUE_VIOLATION } from './db.js';
 
 const SCRYPT_KEYLEN = 64;
 const USERNAME_RE = /^[a-z0-9_]+$/;
@@ -40,9 +41,9 @@ export function newToken() {
   return crypto.randomBytes(32).toString('hex');
 }
 
-export function createSession(db, userId) {
+export async function createSession(db, userId) {
   const token = newToken();
-  db.prepare('INSERT INTO sessions (token, user_id, created_at) VALUES (?, ?, ?)').run(token, userId, nowISO());
+  await db.prepare('INSERT INTO sessions (token, user_id, created_at) VALUES (?, ?, ?)').run(token, userId, nowISO());
   return token;
 }
 
@@ -76,23 +77,29 @@ function validatePassword(raw) {
   return raw;
 }
 
+/** True when `err` is a Postgres unique-constraint violation on `constraintFragment`. */
+function isUniqueViolation(err, constraintFragment) {
+  return err?.code === UNIQUE_VIOLATION &&
+    (!constraintFragment || String(err.constraint ?? '').includes(constraintFragment));
+}
+
 // ------------------------------------------------------------------ helpers
 
 /**
  * Create a user directly (used by /register and by the seeder).
  * @throws {ApiError} 409 on duplicate username/email.
  */
-export function createUser(db, { username, name, email, password, avatarColor = null, id = null, createdAt = null }) {
+export async function createUser(db, { username, name, email, password, avatarColor = null, id = null, createdAt = null }) {
   const u = validateUsername(username);
   const n = typeof name === 'string' ? name.trim() : '';
   if (n.length < 1 || n.length > 40) throw ApiError.validation('name must be 1-40 characters', 'name');
   const e = validateEmail(email);
   const p = validatePassword(password);
 
-  if (db.prepare('SELECT 1 AS x FROM users WHERE username = ?').get(u)) {
+  if (await db.prepare('SELECT 1 AS x FROM users WHERE username = ?').get(u)) {
     throw ApiError.conflict('That username is already taken');
   }
-  if (db.prepare('SELECT 1 AS x FROM users WHERE email = ?').get(e)) {
+  if (await db.prepare('SELECT 1 AS x FROM users WHERE email = ?').get(e)) {
     throw ApiError.conflict('That email is already registered');
   }
 
@@ -109,14 +116,22 @@ export function createUser(db, { username, name, email, password, avatarColor = 
     created_at: at,
     last_active_at: at,
   };
-  db.prepare(
-    `INSERT INTO users (id, username, name, email, phone, password_hash, is_anonymous,
-                        avatar_color, created_at, last_active_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(
-    row.id, row.username, row.name, row.email, row.phone, row.password_hash,
-    row.is_anonymous, row.avatar_color, row.created_at, row.last_active_at
-  );
+  try {
+    await db.prepare(
+      `INSERT INTO users (id, username, name, email, phone, password_hash, is_anonymous,
+                          avatar_color, created_at, last_active_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      row.id, row.username, row.name, row.email, row.phone, row.password_hash,
+      row.is_anonymous, row.avatar_color, row.created_at, row.last_active_at
+    );
+  } catch (err) {
+    // The SELECT checks above are the friendly path; this is the real
+    // guarantee against two concurrent registrations racing past them.
+    if (isUniqueViolation(err, 'username')) throw ApiError.conflict('That username is already taken');
+    if (isUniqueViolation(err, 'email')) throw ApiError.conflict('That email is already registered');
+    throw err;
+  }
   return row;
 }
 
@@ -143,14 +158,14 @@ const HANDLE_NOUNS = [
  * respect — it has an id, a handle, friends, habits. It simply cannot be
  * recovered on another device until it is claimed via [linkCredentials].
  */
-export function createAnonymousUser(db, { name = null, avatarColor = null } = {}) {
+export async function createAnonymousUser(db, { name = null, avatarColor = null } = {}) {
   let username = null;
   for (let attempt = 0; attempt < 40 && username === null; attempt++) {
     const adjective = HANDLE_ADJECTIVES[randomInt(HANDLE_ADJECTIVES.length)];
     const noun = HANDLE_NOUNS[randomInt(HANDLE_NOUNS.length)];
     const suffix = String(randomInt(10000)).padStart(4, '0');
     const candidate = `${adjective}_${noun}${suffix}`.slice(0, 20);
-    if (!db.prepare('SELECT 1 AS x FROM users WHERE username = ?').get(candidate)) {
+    if (!(await db.prepare('SELECT 1 AS x FROM users WHERE username = ?').get(candidate))) {
       username = candidate;
     }
   }
@@ -175,14 +190,23 @@ export function createAnonymousUser(db, { name = null, avatarColor = null } = {}
     created_at: at,
     last_active_at: at,
   };
-  db.prepare(
-    `INSERT INTO users (id, username, name, email, phone, password_hash, is_anonymous,
-                        avatar_color, created_at, last_active_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(
-    row.id, row.username, row.name, row.email, row.phone, row.password_hash,
-    row.is_anonymous, row.avatar_color, row.created_at, row.last_active_at
-  );
+  try {
+    await db.prepare(
+      `INSERT INTO users (id, username, name, email, phone, password_hash, is_anonymous,
+                          avatar_color, created_at, last_active_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      row.id, row.username, row.name, row.email, row.phone, row.password_hash,
+      row.is_anonymous, row.avatar_color, row.created_at, row.last_active_at
+    );
+  } catch (err) {
+    if (isUniqueViolation(err, 'username')) {
+      // The 40-attempt probe above raced someone else — one clean retry with
+      // a fresh handle is enough given how unlikely this already is.
+      return createAnonymousUser(db, { name, avatarColor });
+    }
+    throw err;
+  }
   return row;
 }
 
@@ -200,8 +224,8 @@ export function validatePhone(phone) {
  * Claim an anonymous account by attaching an email and/or phone plus a
  * password, so it can be recovered on another device.
  */
-export function linkCredentials(db, userId, { email, phone, password, username }) {
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+export async function linkCredentials(db, userId, { email, phone, password, username }) {
+  const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
   if (!user) throw ApiError.notFound('No such user');
   if (!user.is_anonymous) {
     throw ApiError.conflict('This account is already linked');
@@ -217,10 +241,10 @@ export function linkCredentials(db, userId, { email, phone, password, username }
   }
   const pw = validatePassword(password);
 
-  if (e && db.prepare('SELECT 1 AS x FROM users WHERE email = ? AND id != ?').get(e, userId)) {
+  if (e && (await db.prepare('SELECT 1 AS x FROM users WHERE email = ? AND id != ?').get(e, userId))) {
     throw ApiError.conflict('That email is already registered');
   }
-  if (p && db.prepare('SELECT 1 AS x FROM users WHERE phone = ? AND id != ?').get(p, userId)) {
+  if (p && (await db.prepare('SELECT 1 AS x FROM users WHERE phone = ? AND id != ?').get(p, userId))) {
     throw ApiError.conflict('That phone number is already registered');
   }
 
@@ -229,22 +253,29 @@ export function linkCredentials(db, userId, { email, phone, password, username }
   if (username !== undefined && username !== null) {
     u = validateUsername(username);
     if (u !== user.username &&
-        db.prepare('SELECT 1 AS x FROM users WHERE username = ?').get(u)) {
+        (await db.prepare('SELECT 1 AS x FROM users WHERE username = ?').get(u))) {
       throw ApiError.conflict('That username is already taken');
     }
   }
 
-  db.prepare(
-    `UPDATE users
-        SET email = ?, phone = ?, password_hash = ?, username = ?, is_anonymous = 0
-      WHERE id = ?`
-  ).run(e, p, hashPassword(pw), u, userId);
+  try {
+    await db.prepare(
+      `UPDATE users
+          SET email = ?, phone = ?, password_hash = ?, username = ?, is_anonymous = 0
+        WHERE id = ?`
+    ).run(e, p, hashPassword(pw), u, userId);
+  } catch (err) {
+    if (isUniqueViolation(err, 'email')) throw ApiError.conflict('That email is already registered');
+    if (isUniqueViolation(err, 'phone')) throw ApiError.conflict('That phone number is already registered');
+    if (isUniqueViolation(err, 'username')) throw ApiError.conflict('That username is already taken');
+    throw err;
+  }
 
   return db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
 }
 
 /** Resolve a bearer token (header or ?token=) to a user row. */
-export function authenticate(db, req, url) {
+export async function authenticate(db, req, url) {
   const header = req.headers['authorization'] ?? req.headers['Authorization'];
   let token = null;
   if (typeof header === 'string' && header.toLowerCase().startsWith('bearer ')) {
@@ -254,13 +285,13 @@ export function authenticate(db, req, url) {
   if (!token && url) token = url.searchParams.get('token');
   if (!token) throw ApiError.unauthorized('Missing bearer token');
 
-  const session = db.prepare('SELECT * FROM sessions WHERE token = ?').get(token);
+  const session = await db.prepare('SELECT * FROM sessions WHERE token = ?').get(token);
   if (!session) throw ApiError.unauthorized('Invalid or expired token');
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(session.user_id);
+  const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(session.user_id);
   if (!user) throw ApiError.unauthorized('Invalid or expired token');
 
   const at = nowISO();
-  db.prepare('UPDATE users SET last_active_at = ? WHERE id = ?').run(at, user.id);
+  await db.prepare('UPDATE users SET last_active_at = ? WHERE id = ?').run(at, user.id);
   user.last_active_at = at;
   return { user, token };
 }
@@ -271,14 +302,14 @@ export function registerAuthRoutes(router, ctx) {
   const { db } = ctx;
 
   router.post('/api/auth/register', async ({ res, body }) => {
-    const user = createUser(db, {
+    const user = await createUser(db, {
       username: body.username,
       name: body.name,
       email: body.email,
       password: body.password,
       avatarColor: body.avatarColor,
     });
-    const token = createSession(db, user.id);
+    const token = await createSession(db, user.id);
     sendJson(res, 201, { token, user: publicUser(user) });
   });
 
@@ -287,17 +318,17 @@ export function registerAuthRoutes(router, ctx) {
    * first launch instead of showing a sign-up screen.
    */
   router.post('/api/auth/anonymous', async ({ res, body }) => {
-    const user = createAnonymousUser(db, {
+    const user = await createAnonymousUser(db, {
       name: body?.name,
       avatarColor: body?.avatarColor,
     });
-    const token = createSession(db, user.id);
+    const token = await createSession(db, user.id);
     sendJson(res, 201, { token, user: privateUser(user) });
   });
 
   /** Claim the current anonymous account with an email and/or phone. */
   router.post('/api/auth/link', async ({ res, body, me }) => {
-    const updated = linkCredentials(db, me.id, {
+    const updated = await linkCredentials(db, me.id, {
       email: body.email,
       phone: body.phone,
       password: body.password,
@@ -317,9 +348,9 @@ export function registerAuthRoutes(router, ctx) {
     const key = raw.trim().toLowerCase();
     const phoneKey = key.replace(/[\s()\-.]/g, '');
     const user =
-      db.prepare('SELECT * FROM users WHERE username = ?').get(key) ??
-      db.prepare('SELECT * FROM users WHERE email = ?').get(key) ??
-      db.prepare('SELECT * FROM users WHERE phone = ?').get(phoneKey);
+      (await db.prepare('SELECT * FROM users WHERE username = ?').get(key)) ??
+      (await db.prepare('SELECT * FROM users WHERE email = ?').get(key)) ??
+      (await db.prepare('SELECT * FROM users WHERE phone = ?').get(phoneKey));
 
     // Same 401 whether the user is unknown, unclaimed, or the password is
     // wrong — an anonymous account has no password_hash and must never be
@@ -327,14 +358,14 @@ export function registerAuthRoutes(router, ctx) {
     if (!user || !user.password_hash || !verifyPassword(body.password, user.password_hash)) {
       throw ApiError.unauthorized('Incorrect username or password');
     }
-    const token = createSession(db, user.id);
+    const token = await createSession(db, user.id);
     sendJson(res, 200, { token, user: publicUser(user) });
   });
 
   router.post('/api/auth/logout', async ({ res, token, me }) => {
-    db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
+    await db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
     // A signed-out handset must stop receiving this account's pushes.
-    db.prepare('DELETE FROM devices WHERE user_id = ?').run(me.id);
+    await db.prepare('DELETE FROM devices WHERE user_id = ?').run(me.id);
     sendNoContent(res);
   }, { auth: true });
 
@@ -348,9 +379,9 @@ export function registerAuthRoutes(router, ctx) {
     if (body.avatarColor !== undefined) updates.avatar_color = normalizeColor(body.avatarColor, 'avatarColor');
     if (Object.keys(updates).length > 0) {
       const sets = Object.keys(updates).map((k) => `${k} = ?`).join(', ');
-      db.prepare(`UPDATE users SET ${sets} WHERE id = ?`).run(...Object.values(updates), me.id);
+      await db.prepare(`UPDATE users SET ${sets} WHERE id = ?`).run(...Object.values(updates), me.id);
     }
-    const fresh = db.prepare('SELECT * FROM users WHERE id = ?').get(me.id);
+    const fresh = await db.prepare('SELECT * FROM users WHERE id = ?').get(me.id);
     sendJson(res, 200, { user: privateUser(fresh) });
   }, { auth: true });
 }

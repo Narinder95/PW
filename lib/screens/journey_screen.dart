@@ -1,7 +1,25 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import '../models/habit.dart';
+import '../models/habit_catalog.dart';
+import '../services/api/api_exception.dart';
 import '../widgets/activity_input_card.dart';
 import '../widgets/app_scope.dart';
+import '../widgets/friends/state_panels.dart';
 import '../widgets/journey/journey_canvas.dart';
+
+/// The five [kHabitCatalog] entries the Journey tab's "LOG TODAY" panel
+/// offers, in display order. `Steps` is deliberately excluded: it already has
+/// its own logging surface on the Journal tab, and it drives the walking
+/// challenge above rather than being just another habit tile.
+const List<String> _kJourneyPanelKeys = <String>[
+  'water',
+  'exercise',
+  'sleep',
+  'meditation',
+  'reading',
+];
 
 class JourneyScreen extends StatefulWidget {
   const JourneyScreen({Key? key}) : super(key: key);
@@ -11,17 +29,18 @@ class JourneyScreen extends StatefulWidget {
 }
 
 class _JourneyScreenState extends State<JourneyScreen> {
-  final Map<String, int> activityValues = {
-    'water': 0,
-    'exercise': 0,
-    'sleep': 0,
-    'meditation': 0,
-    'reading': 0,
-  };
-
   final scrollController = ScrollController();
   final GlobalKey<JourneyCanvasState> _journeyCanvasKey = GlobalKey();
-  bool _isSaving = false;
+
+  /// The signed-in user's real habits — the same `GET /api/habits` data the
+  /// Journal tab shows, so logging Water/Exercise/Sleep/Meditate/Read here
+  /// updates the very same habit and reads back identically on Journal.
+  List<Habit> _habits = const <Habit>[];
+  bool _habitsLoading = true;
+
+  /// Catalogue keys with a log request in flight, so a double-tap on one
+  /// tile can't fire twice, without blocking the other tiles.
+  final Set<String> _loggingKeys = <String>{};
   DateTime? _lastSaveTime;
 
   AppServices? _services;
@@ -33,6 +52,7 @@ class _JourneyScreenState extends State<JourneyScreen> {
     final services = AppScope.of(context);
     if (identical(_services, services)) return;
     _services = services;
+    _loadHabits();
 
     if (!_bootstrapped && services.auth.isSignedIn) {
       _bootstrapped = true;
@@ -47,19 +67,82 @@ class _JourneyScreenState extends State<JourneyScreen> {
     super.dispose();
   }
 
-  Future<void> _autoSaveActivity(String type) async {
-    if (_isSaving) return;
+  Future<void> _loadHabits() async {
+    final services = _services;
+    if (services == null) return;
+    if (!services.auth.isSignedIn) {
+      setState(() {
+        _habits = const <Habit>[];
+        _habitsLoading = false;
+      });
+      return;
+    }
 
-    _isSaving = true;
-    _lastSaveTime = DateTime.now();
-
+    setState(() => _habitsLoading = true);
     try {
-      // TODO: Send to backend/Firebase
-      // await FirebaseService.saveActivity(type, activityValues[type]!);
-    } catch (e) {
-      // Silently fail
-    } finally {
-      _isSaving = false;
+      final habits = await services.api.getHabits();
+      if (!mounted) return;
+      setState(() {
+        _habits = habits;
+        _habitsLoading = false;
+      });
+    } on ApiException catch (_) {
+      // The panel just falls back to zeros; the canvas above already has its
+      // own error handling for the walking challenge, and duplicating a
+      // second error banner here would be noise.
+      if (!mounted) return;
+      setState(() => _habitsLoading = false);
+    }
+  }
+
+  Habit? _habitFor(String key) {
+    for (final habit in _habits) {
+      if (habit.name.trim().toLowerCase() == key) return habit;
+    }
+    return null;
+  }
+
+  int _valueFor(String key) => _habitFor(key)?.progress ?? 0;
+
+  /// `POST /api/habits` (if not yet tracked) then `POST /api/habits/:id/log`.
+  /// Mirrors `JournalScreen._activateTemplate` + `_logHabit` so a habit
+  /// logged from here is the exact same server record Journal shows.
+  Future<void> _logActivity(HabitTemplate template, int progress) async {
+    final services = _services;
+    // Guards against a tap racing the initial `GET /api/habits`: without
+    // this, a tap before `_habits` has loaded could create a duplicate
+    // habit because `_habitFor` would find nothing yet to attach the log to.
+    if (services == null || _habitsLoading || _loggingKeys.contains(template.key)) {
+      return;
+    }
+
+    setState(() => _loggingKeys.add(template.key));
+    try {
+      var habit = _habitFor(template.key);
+      habit ??= await services.api.createHabit(
+        name: template.name,
+        target: template.target,
+        unit: template.unit,
+        icon: template.icon,
+        color: template.color,
+      );
+      final result = await services.api.logHabit(habit.id, progress: progress);
+      if (!mounted) return;
+      setState(() {
+        final exists = _habits.any((h) => h.id == result.habit.id);
+        _habits = exists
+            ? [
+                for (final existing in _habits)
+                  existing.id == result.habit.id ? result.habit : existing,
+              ]
+            : [..._habits, result.habit];
+        _loggingKeys.remove(template.key);
+        _lastSaveTime = DateTime.now();
+      });
+    } on ApiException catch (error) {
+      if (!mounted) return;
+      setState(() => _loggingKeys.remove(template.key));
+      showApiErrorSnack(context, error, fallback: 'Could not log that.');
     }
   }
 
@@ -95,9 +178,9 @@ class _JourneyScreenState extends State<JourneyScreen> {
                     child: JourneyCanvas(
                       key: _journeyCanvasKey,
                       stepsToday: challenge?.todaySteps ?? 0,
-                      waterIntake: activityValues['water']!,
-                      exerciseMinutes: activityValues['exercise']!,
-                      sleepHours: activityValues['sleep']!,
+                      waterIntake: _valueFor('water'),
+                      exerciseMinutes: _valueFor('exercise'),
+                      sleepHours: _valueFor('sleep'),
                       challenge: challenge,
                       challengeLoading: services.walkingChallenge.isLoading,
                       challengePermissionDenied:
@@ -150,7 +233,7 @@ class _JourneyScreenState extends State<JourneyScreen> {
                                     ),
                               ),
                               Text(
-                                '${activityValues.values.reduce((a, b) => a + b)} logged',
+                                '${_kJourneyPanelKeys.map(_valueFor).fold<int>(0, (a, b) => a + b)} logged',
                                 style: Theme.of(context)
                                     .textTheme
                                     .labelSmall
@@ -175,13 +258,10 @@ class _JourneyScreenState extends State<JourneyScreen> {
                                   icon: '💧',
                                   label: 'Water',
                                   unit: 'L',
-                                  value: activityValues['water']!,
+                                  value: _valueFor('water'),
                                   onChanged: (value) {
-                                    final previousValue = activityValues['water']!;
-                                    setState(() {
-                                      activityValues['water'] = value;
-                                    });
-                                    _autoSaveActivity('water');
+                                    final previousValue = _valueFor('water');
+                                    unawaited(_logActivity(templateFor('water')!, value));
 
                                     if (value > previousValue) {
                                       _journeyCanvasKey.currentState
@@ -196,13 +276,10 @@ class _JourneyScreenState extends State<JourneyScreen> {
                                   icon: '💪',
                                   label: 'Exercise',
                                   unit: 'min',
-                                  value: activityValues['exercise']!,
+                                  value: _valueFor('exercise'),
                                   onChanged: (value) {
-                                    final previousValue = activityValues['exercise']!;
-                                    setState(() {
-                                      activityValues['exercise'] = value;
-                                    });
-                                    _autoSaveActivity('exercise');
+                                    final previousValue = _valueFor('exercise');
+                                    unawaited(_logActivity(templateFor('exercise')!, value));
 
                                     if (value > previousValue) {
                                       _journeyCanvasKey.currentState
@@ -217,12 +294,9 @@ class _JourneyScreenState extends State<JourneyScreen> {
                                   icon: '😴',
                                   label: 'Sleep',
                                   unit: 'h',
-                                  value: activityValues['sleep']!,
+                                  value: _valueFor('sleep'),
                                   onChanged: (value) {
-                                    setState(() {
-                                      activityValues['sleep'] = value;
-                                    });
-                                    _autoSaveActivity('sleep');
+                                    unawaited(_logActivity(templateFor('sleep')!, value));
                                   },
                                   presets: const [1, 2],
                                   color: const Color(0xFFA78BFA),
@@ -232,13 +306,10 @@ class _JourneyScreenState extends State<JourneyScreen> {
                                   icon: '🧘',
                                   label: 'Meditate',
                                   unit: 'min',
-                                  value: activityValues['meditation']!,
+                                  value: _valueFor('meditation'),
                                   onChanged: (value) {
-                                    final previousValue = activityValues['meditation']!;
-                                    setState(() {
-                                      activityValues['meditation'] = value;
-                                    });
-                                    _autoSaveActivity('meditation');
+                                    final previousValue = _valueFor('meditation');
+                                    unawaited(_logActivity(templateFor('meditation')!, value));
 
                                     if (value > previousValue) {
                                       _journeyCanvasKey.currentState
@@ -253,13 +324,10 @@ class _JourneyScreenState extends State<JourneyScreen> {
                                   icon: '📖',
                                   label: 'Read',
                                   unit: 'min',
-                                  value: activityValues['reading']!,
+                                  value: _valueFor('reading'),
                                   onChanged: (value) {
-                                    final previousValue = activityValues['reading']!;
-                                    setState(() {
-                                      activityValues['reading'] = value;
-                                    });
-                                    _autoSaveActivity('reading');
+                                    final previousValue = _valueFor('reading');
+                                    unawaited(_logActivity(templateFor('reading')!, value));
 
                                     if (value > previousValue) {
                                       _journeyCanvasKey.currentState
@@ -283,7 +351,7 @@ class _JourneyScreenState extends State<JourneyScreen> {
                             children: [
                               Text(
                                 _lastSaveTime != null
-                                    ? '✅ Auto-saving'
+                                    ? '✅ Saved'
                                     : '📝 Log activities below',
                                 style: Theme.of(context)
                                     .textTheme
@@ -293,7 +361,7 @@ class _JourneyScreenState extends State<JourneyScreen> {
                                       fontSize: 11,
                                     ),
                               ),
-                              if (_isSaving)
+                              if (_loggingKeys.isNotEmpty)
                                 SizedBox(
                                   width: 16,
                                   height: 16,

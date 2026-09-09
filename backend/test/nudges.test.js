@@ -221,6 +221,22 @@ describe('nudges', () => {
     assert.equal(after.status, 403);
   });
 
+  test('unfriending after a nudge is sent blocks accepting it', async () => {
+    const a = await app();
+    const sender = await makeUser(a);
+    const recipient = await makeUser(a);
+    await befriend(sender, recipient);
+    const created = await sender.post('/api/nudges', {
+      body: { toUserId: recipient.id, habitName: 'Run' },
+    });
+    const id = created.body.nudge.id;
+
+    assert.equal((await sender.del(`/api/friends/${recipient.id}`)).status, 204);
+
+    const accept = await recipient.post(`/api/nudges/${id}/accept`);
+    assert.equal(accept.status, 403);
+  });
+
   test('a nudge can reference a real habit id', async () => {
     const a = await app();
     const me = await makeUser(a);

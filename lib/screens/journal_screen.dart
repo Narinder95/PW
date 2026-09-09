@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../models/habit.dart';
@@ -155,6 +157,13 @@ class _JournalScreenState extends State<JournalScreen> {
             existing.id == result.habit.id ? result.habit : existing,
         ];
       });
+      // The server folds a "Steps" log into the walking challenge's own
+      // step total (see API_CONTRACT.md), so refresh its cache here too —
+      // otherwise the Journey tab would keep showing the pre-log total
+      // until its next device sync.
+      if (result.habit.name.trim().toLowerCase() == 'steps') {
+        unawaited(services.walkingChallenge.refresh());
+      }
       if (result.justCompleted) {
         // A streak of 1 is just today; the full-screen celebration is for an
         // actual streak (2+ consecutive days). Below that, the snackbar alone

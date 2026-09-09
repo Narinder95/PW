@@ -25,10 +25,10 @@ export function registerActivityRoutes(router, ctx) {
         JOIN users u ON u.id = a.user_id
        WHERE a.user_id != ?
          ${before ? 'AND a.created_at < ?' : ''}
-       ORDER BY a.created_at DESC, a.rowid DESC
+       ORDER BY a.created_at DESC, a.seq DESC
        LIMIT ?`;
     const args = before ? [me.id, me.id, before, limit] : [me.id, me.id, limit];
-    const rows = db.prepare(sql).all(...args);
+    const rows = await db.prepare(sql).all(...args);
     sendJson(res, 200, { activities: rows.map(activityToJson) });
   }, { auth: true });
 }

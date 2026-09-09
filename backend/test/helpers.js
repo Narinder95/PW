@@ -1,7 +1,16 @@
-// Test harness: an in-memory DB + a real http.Server on an ephemeral port.
-import { openDb } from '../src/db.js';
+// Test harness: a throwaway Postgres schema (the modern equivalent of the
+// old node:sqlite `:memory:` database) + a real http.Server on an ephemeral
+// port. Each `makeApp()` call gets its own schema on the same shared
+// DATABASE_URL, dropped again in `app.close()`, so test files stay isolated
+// from each other exactly as they were with one `:memory:` DB per file.
+import { openDb, dropSchema, randomSchemaName } from '../src/db.js';
 import { createServer } from '../src/server.js';
 import { MemoryProvider } from '../src/push/providers.js';
+
+const DATABASE_URL = process.env.DATABASE_URL;
+if (!DATABASE_URL) {
+  throw new Error('DATABASE_URL is not set - see backend/.env (gitignored) for local development.');
+}
 
 /** Swallows expected server-side logging so intentional-error tests stay quiet. */
 export function captureLogger() {
@@ -15,7 +24,8 @@ export function captureLogger() {
 }
 
 export async function makeApp(options = {}) {
-  const db = openDb(':memory:');
+  const schema = randomSchemaName();
+  const db = await openDb(DATABASE_URL, { schema });
   const provider = options.provider ?? new MemoryProvider();
   const logger = options.logger ?? captureLogger();
   const server = createServer(db, {
@@ -67,9 +77,14 @@ export async function makeApp(options = {}) {
       server.closeAllConnections?.();
       await new Promise((resolve) => server.close(resolve));
       try {
-        db.close();
+        await db.close();
       } catch {
         /* already closed */
+      }
+      try {
+        await dropSchema(DATABASE_URL, schema);
+      } catch {
+        /* best-effort cleanup; a leftover empty schema is harmless */
       }
     },
   };

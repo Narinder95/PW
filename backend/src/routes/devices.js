@@ -1,4 +1,5 @@
 import { ApiError, sendJson, sendNoContent, newId, nowISO, requireString, optionalString } from '../http.js';
+import { UNIQUE_VIOLATION } from '../db.js';
 
 const PLATFORMS = new Set(['android', 'ios', 'web']);
 
@@ -25,14 +26,14 @@ export function registerDeviceRoutes(router, ctx) {
     const appVersion = optionalString(body, 'appVersion', { max: 40 });
     const at = nowISO();
 
-    const existing = db.prepare('SELECT * FROM devices WHERE token = ?').get(token);
+    const existing = await db.prepare('SELECT * FROM devices WHERE token = ?').get(token);
     if (existing) {
       // Idempotent re-registration; also REASSIGNS the handset if it now
       // belongs to a different account, so the previous user stops getting
       // this device's pushes.
-      db.prepare('UPDATE devices SET user_id = ?, platform = ?, app_version = ?, last_seen_at = ? WHERE id = ?')
+      await db.prepare('UPDATE devices SET user_id = ?, platform = ?, app_version = ?, last_seen_at = ? WHERE id = ?')
         .run(me.id, platformRaw, appVersion, at, existing.id);
-      const fresh = db.prepare('SELECT * FROM devices WHERE id = ?').get(existing.id);
+      const fresh = await db.prepare('SELECT * FROM devices WHERE id = ?').get(existing.id);
       sendJson(res, 201, { device: deviceToJson(fresh) });
       return;
     }
@@ -46,17 +47,32 @@ export function registerDeviceRoutes(router, ctx) {
       created_at: at,
       last_seen_at: at,
     };
-    db.prepare(
-      `INSERT INTO devices (id, user_id, token, platform, app_version, created_at, last_seen_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
-    ).run(row.id, row.user_id, row.token, row.platform, row.app_version, row.created_at, row.last_seen_at);
+    try {
+      await db.prepare(
+        `INSERT INTO devices (id, user_id, token, platform, app_version, created_at, last_seen_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).run(row.id, row.user_id, row.token, row.platform, row.app_version, row.created_at, row.last_seen_at);
+    } catch (err) {
+      if (err?.code === UNIQUE_VIOLATION) {
+        // Lost a race with another registration of the same brand-new token
+        // (the pre-check above found nothing yet) - reassign it, same as the
+        // `existing` branch above, rather than surface a 500 for what is
+        // really just the idempotent re-registration path.
+        await db.prepare('UPDATE devices SET user_id = ?, platform = ?, app_version = ?, last_seen_at = ? WHERE token = ?')
+          .run(me.id, platformRaw, appVersion, at, token);
+        const fresh = await db.prepare('SELECT * FROM devices WHERE token = ?').get(token);
+        sendJson(res, 201, { device: deviceToJson(fresh) });
+        return;
+      }
+      throw err;
+    }
 
     sendJson(res, 201, { device: deviceToJson(row) });
   }, { auth: true });
 
   router.delete('/api/devices/:token', async ({ res, params, me }) => {
     // Called on logout. Idempotent: unknown tokens still return 204.
-    db.prepare('DELETE FROM devices WHERE user_id = ? AND token = ?').run(me.id, params.token);
+    await db.prepare('DELETE FROM devices WHERE user_id = ? AND token = ?').run(me.id, params.token);
     sendNoContent(res);
   }, { auth: true });
 }

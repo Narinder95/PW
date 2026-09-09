@@ -117,7 +117,7 @@ test('habits', async (t) => {
       assert.equal(again.body.activity, null, `progress ${progress} must not create a second activity`);
     }
 
-    const rows = app.db.prepare('SELECT * FROM activities WHERE habit_id = ?').all(habit.id);
+    const rows = await app.db.prepare('SELECT * FROM activities WHERE habit_id = ?').all(habit.id);
     assert.equal(rows.length, 1, 'exactly one activities row');
 
     // ...and exactly one friend_activity notification for the one friend.
@@ -137,7 +137,8 @@ test('habits', async (t) => {
     const yesterday = await u.post(`/api/habits/${habit.id}/log`, { body: { progress: 10, date: dayOffset(-1) } });
     assert.ok(today.body.activity);
     assert.ok(yesterday.body.activity);
-    assert.equal(app.db.prepare('SELECT COUNT(*) AS n FROM activities WHERE habit_id = ?').get(habit.id).n, 2);
+    const count = await app.db.prepare('SELECT COUNT(*) AS n FROM activities WHERE habit_id = ?').get(habit.id);
+    assert.equal(Number(count.n), 2);
   });
 
   await t.test('weekData is 7 long, oldest first, index 6 = today', async () => {
@@ -228,6 +229,70 @@ test('habits', async (t) => {
     const u = await makeUser(app);
     assert.equal((await u.post('/api/habits/h_nope/log', { body: { progress: 1 } })).status, 404);
     assert.equal((await u.patch('/api/habits/h_nope', { body: { name: 'x' } })).status, 404);
+  });
+
+  await t.test('logging the "Steps" habit also feeds the walking challenge', async () => {
+    const u = await makeUser(app);
+    const habit = await addHabit(u, { name: 'Steps', target: 10000, unit: 'steps' });
+
+    const logged = await u.post(`/api/habits/${habit.id}/log`, { body: { progress: 6500 } });
+    assert.equal(logged.status, 200);
+
+    const challenge = await u.get('/api/challenge');
+    assert.equal(challenge.body.challenge.todaySteps, 6500);
+  });
+
+  await t.test('"Steps" match is case/whitespace-insensitive, like the catalogue key', async () => {
+    const u = await makeUser(app);
+    const habit = await addHabit(u, { name: '  steps  ', target: 10000, unit: 'steps' });
+    await u.post(`/api/habits/${habit.id}/log`, { body: { progress: 4200 } });
+
+    const challenge = await u.get('/api/challenge');
+    assert.equal(challenge.body.challenge.todaySteps, 4200);
+  });
+
+  await t.test('a manual "Steps" log never lowers a bigger value the device already synced', async () => {
+    const u = await makeUser(app);
+    const habit = await addHabit(u, { name: 'Steps', target: 10000, unit: 'steps' });
+    const today = dayOffset(0);
+
+    await u.post('/api/steps/sync', { body: { days: [{ date: today, steps: 9000 }] } });
+    const manual = await u.post(`/api/habits/${habit.id}/log`, { body: { progress: 3000 } });
+    assert.equal(manual.status, 200);
+
+    const challenge = await u.get('/api/challenge');
+    assert.equal(challenge.body.challenge.todaySteps, 9000); // device value preserved
+
+    // A manual log bigger than the device's still wins.
+    await u.post(`/api/habits/${habit.id}/log`, { body: { progress: 12000 } });
+    assert.equal((await u.get('/api/challenge')).body.challenge.todaySteps, 12000);
+  });
+
+  await t.test('logging any other habit never touches daily_steps', async () => {
+    const u = await makeUser(app);
+    const habit = await addHabit(u, { name: 'Water', target: 8, unit: 'cups' });
+    await u.post(`/api/habits/${habit.id}/log`, { body: { progress: 8 } });
+
+    const challenge = await u.get('/api/challenge');
+    assert.equal(challenge.body.challenge.todaySteps, 0);
+  });
+
+  await t.test('a colliding habit name (case/whitespace-insensitive) is rejected, not silently duplicated', async () => {
+    const u = await makeUser(app);
+    const original = await addHabit(u, { name: 'Water', target: 8, unit: 'cups' });
+
+    const dup = await u.post('/api/habits', { body: { name: '  water  ', target: 8, unit: 'cups' } });
+    assert.equal(dup.status, 409);
+    assert.equal(dup.body.error.code, 'conflict');
+    assert.equal((await u.get('/api/habits')).body.habits.length, 1);
+
+    const other = await addHabit(u, { name: 'Sleep', target: 8, unit: 'hours' });
+    const renameClash = await u.patch(`/api/habits/${other.id}`, { body: { name: 'WATER' } });
+    assert.equal(renameClash.status, 409);
+
+    // Renaming a habit to its own current name (any case) is not a collision.
+    const noop = await u.patch(`/api/habits/${original.id}`, { body: { name: 'water' } });
+    assert.equal(noop.status, 200);
   });
 
   await t.test('habits require auth', async () => {

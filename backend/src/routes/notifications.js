@@ -4,13 +4,14 @@ import { notificationToJson } from '../domain.js';
 const DEFAULT_LIMIT = 30;
 const MAX_LIMIT = 100;
 
-function unreadCount(db, userId) {
-  return db.prepare('SELECT COUNT(*) AS n FROM notifications WHERE user_id = ? AND read = 0').get(userId).n;
+async function unreadCount(db, userId) {
+  const row = await db.prepare('SELECT COUNT(*) AS n FROM notifications WHERE user_id = ? AND read = 0').get(userId);
+  return Number(row.n);
 }
 
 /** Another user's notification must look like it does not exist at all. */
-function ownNotificationOr404(db, id, userId) {
-  const row = db.prepare('SELECT * FROM notifications WHERE id = ?').get(id);
+async function ownNotificationOr404(db, id, userId) {
+  const row = await db.prepare('SELECT * FROM notifications WHERE id = ?').get(id);
   if (!row || row.user_id !== userId) throw ApiError.notFound('Notification not found');
   return row;
 }
@@ -22,31 +23,32 @@ export function registerNotificationRoutes(router, ctx) {
     const limit = parseLimit(url.searchParams.get('limit'), DEFAULT_LIMIT, MAX_LIMIT);
     const unreadOnly = parseBool(url.searchParams.get('unreadOnly'));
     const sql = unreadOnly
-      ? 'SELECT * FROM notifications WHERE user_id = ? AND read = 0 ORDER BY created_at DESC, rowid DESC LIMIT ?'
-      : 'SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?';
-    const notifications = db.prepare(sql).all(me.id, limit).map(notificationToJson);
+      ? 'SELECT * FROM notifications WHERE user_id = ? AND read = 0 ORDER BY created_at DESC, seq DESC LIMIT ?'
+      : 'SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC, seq DESC LIMIT ?';
+    const rows = await db.prepare(sql).all(me.id, limit);
+    const notifications = rows.map(notificationToJson);
     // unreadCount is always the caller's TOTAL unread, ignoring limit/unreadOnly.
-    sendJson(res, 200, { notifications, unreadCount: unreadCount(db, me.id) });
+    sendJson(res, 200, { notifications, unreadCount: await unreadCount(db, me.id) });
   }, { auth: true });
 
   router.get('/api/notifications/unread-count', async ({ res, me }) => {
-    sendJson(res, 200, { count: unreadCount(db, me.id) });
+    sendJson(res, 200, { count: await unreadCount(db, me.id) });
   }, { auth: true });
 
   router.post('/api/notifications/read-all', async ({ res, me }) => {
-    const result = db.prepare('UPDATE notifications SET read = 1 WHERE user_id = ? AND read = 0').run(me.id);
+    const result = await db.prepare('UPDATE notifications SET read = 1 WHERE user_id = ? AND read = 0').run(me.id);
     sendJson(res, 200, { updated: Number(result.changes) });
   }, { auth: true });
 
   router.post('/api/notifications/:id/read', async ({ res, params, me }) => {
-    const row = ownNotificationOr404(db, params.id, me.id);
-    db.prepare('UPDATE notifications SET read = 1 WHERE id = ?').run(row.id); // idempotent
+    const row = await ownNotificationOr404(db, params.id, me.id);
+    await db.prepare('UPDATE notifications SET read = 1 WHERE id = ?').run(row.id); // idempotent
     sendNoContent(res);
   }, { auth: true });
 
   router.delete('/api/notifications/:id', async ({ res, params, me }) => {
-    const row = ownNotificationOr404(db, params.id, me.id);
-    db.prepare('DELETE FROM notifications WHERE id = ?').run(row.id);
+    const row = await ownNotificationOr404(db, params.id, me.id);
+    await db.prepare('DELETE FROM notifications WHERE id = ?').run(row.id);
     sendNoContent(res);
   }, { auth: true });
 

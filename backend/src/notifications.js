@@ -100,7 +100,7 @@ export class SseHub {
  * @param {{db: object, hub: SseHub, push?: object, logger?: object}} ctx
  * @returns {object} the Notification in contract shape
  */
-export function createNotification(ctx, params) {
+export async function createNotification(ctx, params) {
   const {
     userId,
     type,
@@ -132,7 +132,7 @@ export function createNotification(ctx, params) {
     created_at: nowISO(),
   };
 
-  ctx.db
+  await ctx.db
     .prepare(
       `INSERT INTO notifications
          (id, user_id, type, title, body, actor_id, actor_name, avatar_color,

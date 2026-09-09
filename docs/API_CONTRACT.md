@@ -323,12 +323,26 @@ returns the same `401` it gives an unknown user, so handles cannot be probed.
 
 `target` must be an integer >= 1. `progress` must be an integer >= 0.
 
+A habit's `name` must be unique per user, case/whitespace-insensitively.
+`POST /api/habits` and `PATCH /api/habits/:id` (when changing `name`) return
+`409 conflict` on a collision. This matches the client's own use of
+`name.trim().toLowerCase()` to line habits up with the catalogue and with the
+`Steps` habit below - without it, two colliding habits would make one
+silently disappear from the Journal list.
+
 `POST /log` **sets** (does not increment) that day's progress. When a log
 crosses `progress >= target` for the first time on that date the server:
 1. creates an `activities` row (returned as `activity`), and
 2. creates a `friend_activity` notification for every friend.
 
 Re-logging a completed habit the same day does not create a second activity.
+
+Logging the habit named exactly `Steps` (case/whitespace-insensitive - the
+catalogue entry every account starts with) also upserts that date's
+`daily_steps` row via the same MAX-of-existing-and-new rule `POST
+/api/steps/sync` uses (below), so a manual step log raises the walking
+challenge's total too instead of the two counters silently disagreeing. Any
+other habit's log never touches `daily_steps`.
 
 ### Friends
 | Method | Path | Response |
@@ -447,6 +461,9 @@ Rules:
 - Creating notifies the recipient (`nudge` or `cheer`).
 - Accepting notifies the original sender (`nudge_accepted`).
 - Only the recipient may accept -> else `403`. Accepting twice -> `409 conflict`.
+- Accepting requires the sender and recipient to *still* be friends -> else
+  `403 forbidden`. A nudge outlives the friendship it was sent under (there is
+  no cleanup on unfriend), so this is checked again at accept time.
 
 ### Notifications
 | Method | Path | Response |
@@ -487,10 +504,12 @@ cannot hold an SSE connection fall back to polling
 
 `POST /api/steps/sync` upserts one `daily_steps` row per entry (1-31 per
 call, `steps` an integer 0-200000). Written from the device's own health data
-(Health Connect on Android, HealthKit on iOS) - never manually entered.
-Re-syncing the same `date` takes the **larger** of the existing and new value,
-never the smaller: a client may resync a partial day more than once as the
-device backfills, and a later, larger total must win.
+(Health Connect on Android, HealthKit on iOS). The only other writer of
+`daily_steps` is the `Steps` habit log, above. Re-syncing the same `date`
+takes the **larger** of the existing and new value, never the smaller: a
+client may resync a partial day more than once as the device backfills, and a
+later, larger total must win - the same rule applies between a device sync and
+a manual `Steps` log, so neither can accidentally lower the day's total.
 
 ### Push devices
 

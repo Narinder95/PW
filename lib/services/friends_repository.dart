@@ -404,44 +404,6 @@ class FriendsRepository extends ChangeNotifier {
     }
   }
 
-  /// Applies a friend summary that arrived from somewhere else — an accepted
-  /// friend-request notification, say — without a refetch.
-  void upsertFriend(Friend friend) {
-    if (_disposed) return;
-    _insertFriend(friend);
-    _notify();
-  }
-
-  /// Prepends an activity row pushed over SSE.
-  void prependActivity(FriendActivity item) {
-    if (_disposed) return;
-    if (_activity.any((a) => a.id == item.id)) return;
-    _activity = List<FriendActivity>.unmodifiable(
-      <FriendActivity>[item, ..._activity],
-    );
-    _notify();
-  }
-
-  /// Adds a nudge pushed over SSE to the pending list.
-  void prependReceivedNudge(Nudge nudge) {
-    if (_disposed) return;
-    if (_receivedNudges.any((n) => n.id == nudge.id)) return;
-    _receivedNudges = List<Nudge>.unmodifiable(
-      <Nudge>[nudge, ..._receivedNudges],
-    );
-    _notify();
-  }
-
-  /// Adds an incoming request pushed over SSE.
-  void prependIncomingRequest(FriendRequest request) {
-    if (_disposed) return;
-    if (_incomingRequests.any((r) => r.id == request.id)) return;
-    _incomingRequests = List<FriendRequest>.unmodifiable(
-      <FriendRequest>[request, ..._incomingRequests],
-    );
-    _notify();
-  }
-
   /// Drops every cached list. Call on sign-out so the next account never sees
   /// the previous one's friends.
   void clear() {

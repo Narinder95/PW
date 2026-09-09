@@ -1,7 +1,6 @@
 // Deterministic, idempotent DEV/TEST fixture data.
 //
-//   node src/seed.js            seeds backend/data/pw.db
-//   node src/seed.js --db :memory:
+//   node src/seed.js            seeds the database at DATABASE_URL
 //
 // This is BACKEND fixture data only - the Flutter app must ship with none of it.
 // There is no Math.random() here (or anywhere in src/): every "random-looking"
@@ -101,7 +100,7 @@ function isoAt(date, hour, minute) {
   return `${date}T${hh}:${mm}:00.000Z`;
 }
 
-export function seed(db, { log = () => {} } = {}) {
+export async function seed(db, { log = () => {} } = {}) {
   const today = todayISO();
   const ctx = { db, hub: null, push: null, logger: console };
 
@@ -110,12 +109,12 @@ export function seed(db, { log = () => {} } = {}) {
   // friendships, requests, nudges, notifications and devices, which is what
   // makes re-running this script produce an identical database.
   const del = db.prepare('DELETE FROM users WHERE id = ?');
-  for (const u of USERS) del.run(u.id);
+  for (const u of USERS) await del.run(u.id);
 
   // --- users -------------------------------------------------------------
   const byUsername = new Map();
   for (const u of USERS) {
-    const row = createUser(db, {
+    const row = await createUser(db, {
       id: u.id,
       username: u.username,
       name: u.name,
@@ -124,7 +123,7 @@ export function seed(db, { log = () => {} } = {}) {
       avatarColor: u.color,
       createdAt: `${addDays(today, -u.ageDays)}T09:00:00.000Z`,
     });
-    db.prepare('UPDATE users SET last_active_at = ? WHERE id = ?')
+    await db.prepare('UPDATE users SET last_active_at = ? WHERE id = ?')
       .run(isoAt(addDays(today, u.username === 'devong' ? -2 : 0), 8, 15), row.id);
     byUsername.set(u.username, row);
   }
@@ -136,12 +135,12 @@ export function seed(db, { log = () => {} } = {}) {
   );
   for (const u of USERS) {
     const defs = HABITS[u.username] ?? [];
-    defs.forEach((h, index) => {
+    for (const [index, h] of defs.entries()) {
       const id = `h_seed_${u.username}_${h.key}`;
       const createdAt = `${addDays(today, -Math.min(u.ageDays, LOG_DAYS + 5))}T09:00:00.000Z`;
-      insertHabit.run(id, u.id, h.name, h.icon, h.color, h.target, h.unit, createdAt);
+      await insertHabit.run(id, u.id, h.name, h.icon, h.color, h.target, h.unit, createdAt);
       habitRows.push({ ...h, id, index, userId: u.id, username: u.username });
-    });
+    }
   }
 
   // --- habit logs --------------------------------------------------------
@@ -171,7 +170,7 @@ export function seed(db, { log = () => {} } = {}) {
         progress = Math.floor(habit.target * ((noise % 90) / 100));
       }
 
-      insertLog.run(`hl_seed_${habit.id}_${date}`, habit.id, habit.userId, date, progress, isoAt(date, 20, 0));
+      await insertLog.run(`hl_seed_${habit.id}_${date}`, habit.id, habit.userId, date, progress, isoAt(date, 20, 0));
       if (progress >= habit.target) completions.push({ habit, date, progress, offset: d });
     }
   }
@@ -182,8 +181,8 @@ export function seed(db, { log = () => {} } = {}) {
   );
   for (const [a, b] of FRIENDSHIPS) {
     const at = `${addDays(today, -30)}T12:00:00.000Z`;
-    insertFriendship.run(a, b, at);
-    insertFriendship.run(b, a, at);
+    await insertFriendship.run(a, b, at);
+    await insertFriendship.run(b, a, at);
   }
 
   // --- activity feed -----------------------------------------------------
@@ -198,7 +197,7 @@ export function seed(db, { log = () => {} } = {}) {
   for (const c of recent) {
     const hour = 7 + (h32(`t${c.habit.id}${c.date}`) % 12);
     const minute = h32(`m${c.habit.id}${c.date}`) % 60;
-    insertActivity.run(
+    await insertActivity.run(
       `a_seed_${c.habit.id}_${c.date}`,
       c.habit.userId,
       c.habit.id,
@@ -220,10 +219,10 @@ export function seed(db, { log = () => {} } = {}) {
 
   const requestId = 'fr_seed_devon_alex';
   const requestAt = isoAt(today, 7, 40);
-  db.prepare(
+  await db.prepare(
     "INSERT INTO friend_requests (id, from_user_id, to_user_id, status, created_at, responded_at) VALUES (?, ?, ?, 'pending', ?, NULL)"
   ).run(requestId, devon.id, alex.id, requestAt);
-  createNotification(ctx, {
+  await createNotification(ctx, {
     id: 'nt_seed_request',
     userId: alex.id,
     type: 'friend_request',
@@ -243,11 +242,11 @@ export function seed(db, { log = () => {} } = {}) {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, NULL)`
   );
 
-  insertNudge.run(
+  await insertNudge.run(
     'n_seed_taylor_alex', 'nudge', taylor.id, alex.id, 'h_seed_alexr_meditate',
     'Meditate', 'M', '#A855F7', null, isoAt(today, 8, 5)
   );
-  createNotification(ctx, {
+  await createNotification(ctx, {
     id: 'nt_seed_nudge',
     userId: alex.id,
     type: 'nudge',
@@ -262,11 +261,11 @@ export function seed(db, { log = () => {} } = {}) {
     refId: 'n_seed_taylor_alex',
   });
 
-  insertNudge.run(
+  await insertNudge.run(
     'n_seed_priya_alex', 'cheer', priya.id, alex.id, 'h_seed_alexr_steps',
     'Steps', 'R', '#2E7D32', 'Nine days straight - keep going!', isoAt(today, 8, 30)
   );
-  createNotification(ctx, {
+  await createNotification(ctx, {
     id: 'nt_seed_cheer',
     userId: alex.id,
     type: 'cheer',
@@ -282,11 +281,11 @@ export function seed(db, { log = () => {} } = {}) {
   });
 
   // One outgoing nudge so Alex's "sent" list is not empty.
-  insertNudge.run(
+  await insertNudge.run(
     'n_seed_alex_jordan', 'nudge', alex.id, jordan.id, 'h_seed_jordanp_journal',
     'Journal', 'J', '#60A5FA', 'Your turn!', isoAt(today, 9, 0)
   );
-  createNotification(ctx, {
+  await createNotification(ctx, {
     id: 'nt_seed_nudge_out',
     userId: jordan.id,
     type: 'nudge',
@@ -302,18 +301,18 @@ export function seed(db, { log = () => {} } = {}) {
   });
 
   // --- friend activity + milestone notifications for Alex ----------------
-  const alexFriendIds = new Set(
-    db.prepare('SELECT friend_id FROM friendships WHERE user_id = ?').all(alex.id).map((r) => r.friend_id)
-  );
-  const todaysFriendActivity = db
+  const alexFriendRows = await db.prepare('SELECT friend_id FROM friendships WHERE user_id = ?').all(alex.id);
+  const alexFriendIds = new Set(alexFriendRows.map((r) => r.friend_id));
+  const todaysActivityRows = await db
     .prepare('SELECT * FROM activities WHERE date = ? ORDER BY created_at DESC')
-    .all(today)
+    .all(today);
+  const todaysFriendActivity = todaysActivityRows
     .filter((a) => alexFriendIds.has(a.user_id))
     .slice(0, 4);
 
-  todaysFriendActivity.forEach((a, i) => {
-    const actor = db.prepare('SELECT * FROM users WHERE id = ?').get(a.user_id);
-    createNotification(ctx, {
+  for (const [i, a] of todaysFriendActivity.entries()) {
+    const actor = await db.prepare('SELECT * FROM users WHERE id = ?').get(a.user_id);
+    await createNotification(ctx, {
       id: `nt_seed_activity_${i}`,
       userId: alex.id,
       type: 'friend_activity',
@@ -327,9 +326,9 @@ export function seed(db, { log = () => {} } = {}) {
       refType: 'activity',
       refId: a.id,
     });
-  });
+  }
 
-  createNotification(ctx, {
+  await createNotification(ctx, {
     id: 'nt_seed_milestone',
     userId: alex.id,
     type: 'streak_milestone',
@@ -340,7 +339,7 @@ export function seed(db, { log = () => {} } = {}) {
   });
 
   // A couple already read, so unreadCount is not simply "everything".
-  db.prepare('UPDATE notifications SET read = 1 WHERE id IN (?, ?)').run('nt_seed_activity_3', 'nt_seed_milestone');
+  await db.prepare('UPDATE notifications SET read = 1 WHERE id IN (?, ?)').run('nt_seed_activity_3', 'nt_seed_milestone');
 
   const summary = {
     users: USERS.length,
@@ -362,17 +361,16 @@ function isMain() {
 }
 
 if (isMain()) {
-  const argIndex = process.argv.indexOf('--db');
-  const here = path.dirname(fileURLToPath(import.meta.url));
-  const dbPath =
-    argIndex !== -1 && process.argv[argIndex + 1]
-      ? process.argv[argIndex + 1]
-      : process.env.PW_DB_PATH ?? path.resolve(here, '..', 'data', 'pw.db');
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) {
+    console.error('DATABASE_URL is not set. See backend/.env (gitignored) for local development.');
+    process.exit(1);
+  }
 
-  const db = openDb(dbPath === ':memory:' ? ':memory:' : path.resolve(dbPath));
-  const summary = seed(db);
+  const db = await openDb(databaseUrl);
+  const summary = await seed(db);
 
-  console.log(`Seeded ${dbPath}`);
+  console.log(`Seeded ${new URL(databaseUrl).host}`);
   console.log(
     `  ${summary.users} users, ${summary.habits} habits, ~${summary.habitLogs} habit logs, ` +
       `${summary.activities} activities, ${summary.friendships} friendships`
@@ -391,5 +389,5 @@ if (isMain()) {
   console.log('  devong     Devon Grant    no habits at all - streak 0, 0%');
   console.log('');
   console.log('  Log in with the username OR the email (e.g. alex@pw.app).');
-  db.close();
+  await db.close();
 }

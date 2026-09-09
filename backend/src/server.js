@@ -92,7 +92,7 @@ export function createServer(db, options = {}) {
       let me = null;
       let token = null;
       if (route.auth) {
-        const authed = authenticate(db, req, url);
+        const authed = await authenticate(db, req, url);
         me = authed.user;
         token = authed.token;
       }

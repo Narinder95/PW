@@ -14,7 +14,7 @@ after(async () => {
   for (const a of apps) await a.close();
 });
 
-function deliveries(a, userId) {
+async function deliveries(a, userId) {
   return a.db
     .prepare('SELECT * FROM push_deliveries WHERE user_id = ? ORDER BY created_at ASC, id ASC')
     .all(userId);
@@ -73,7 +73,7 @@ describe('device registration', () => {
     const again = await me.post('/api/devices', { body: { token: 'tok-1', platform: 'android' } });
     assert.equal(again.status, 201);
 
-    const rows = a.db.prepare('SELECT * FROM devices WHERE user_id = ?').all(me.id);
+    const rows = await a.db.prepare('SELECT * FROM devices WHERE user_id = ?').all(me.id);
     assert.equal(rows.length, 1, 're-registering created a duplicate device row');
   });
 
@@ -85,7 +85,7 @@ describe('device registration', () => {
     await first.post('/api/devices', { body: { token: 'shared-handset', platform: 'ios' } });
     await second.post('/api/devices', { body: { token: 'shared-handset', platform: 'ios' } });
 
-    const rows = a.db.prepare('SELECT * FROM devices WHERE token = ?').all('shared-handset');
+    const rows = await a.db.prepare('SELECT * FROM devices WHERE token = ?').all('shared-handset');
     assert.equal(rows.length, 1);
     assert.equal(rows[0].user_id, second.id, 'the handset kept pushing to the previous account');
   });
@@ -105,15 +105,13 @@ describe('device registration', () => {
     const me = await makeUser(a);
     await me.post('/api/devices', { body: { token: 'tok-del', platform: 'android' } });
     assert.equal((await me.del('/api/devices/tok-del')).status, 204);
-    assert.equal(a.db.prepare('SELECT COUNT(*) n FROM devices WHERE token = ?').get('tok-del').n, 0);
+    const deleted = await a.db.prepare('SELECT COUNT(*) n FROM devices WHERE token = ?').get('tok-del');
+    assert.equal(Number(deleted.n), 0);
 
     await me.post('/api/devices', { body: { token: 'tok-logout', platform: 'android' } });
     await me.post('/api/auth/logout');
-    assert.equal(
-      a.db.prepare('SELECT COUNT(*) n FROM devices WHERE token = ?').get('tok-logout').n,
-      0,
-      'logout left a live push token behind'
-    );
+    const afterLogout = await a.db.prepare('SELECT COUNT(*) n FROM devices WHERE token = ?').get('tok-logout');
+    assert.equal(Number(afterLogout.n), 0, 'logout left a live push token behind');
   });
 
   test('devices require auth', async () => {
@@ -154,7 +152,7 @@ describe('push dispatch', () => {
     }
     assert.ok(payload.collapseKey.startsWith('nudge:'));
 
-    for (const d of deliveries(a, me.id)) assert.equal(d.status, 'sent');
+    for (const d of await deliveries(a, me.id)) assert.equal(d.status, 'sent');
   });
 
   test('badge tracks the unread count as it grows', async () => {
@@ -189,7 +187,7 @@ describe('push dispatch', () => {
 
     assert.equal(res.status, 201, 'the API call must still succeed');
     assert.equal(a.provider.sent.length, 0);
-    assert.equal(deliveries(a, me.id).length, 0);
+    assert.equal((await deliveries(a, me.id)).length, 0);
   });
 
   test('a provider that THROWS does not fail the API call, and the notification survives', async () => {
@@ -210,7 +208,7 @@ describe('push dispatch', () => {
     const notes = await me.get('/api/notifications');
     assert.ok(notes.body.notifications.some((n) => n.type === 'nudge'));
 
-    const rows = deliveries(a, me.id);
+    const rows = await deliveries(a, me.id);
     assert.equal(rows.length, 1);
     assert.equal(rows[0].status, 'failed');
     assert.match(rows[0].error, /threw/);
@@ -230,7 +228,7 @@ describe('push dispatch', () => {
     await a.push.idle();
 
     assert.equal(a.provider.calls, 2, 'expected exactly one retry');
-    const rows = deliveries(a, me.id);
+    const rows = await deliveries(a, me.id);
     assert.equal(rows[0].status, 'sent');
   });
 
@@ -249,7 +247,7 @@ describe('push dispatch', () => {
 
     // 1 initial attempt + 2 retries (helpers.js sets retryDelays = [1, 2]).
     assert.equal(a.provider.calls, 3);
-    assert.equal(deliveries(a, me.id)[0].status, 'failed');
+    assert.equal((await deliveries(a, me.id))[0].status, 'failed');
   });
 
   test('invalid_token deletes the device so we stop pushing into the void', async () => {
@@ -265,12 +263,9 @@ describe('push dispatch', () => {
     await nudgeMe(friend, me, 'Stretch');
     await a.push.idle();
 
-    assert.equal(deliveries(a, me.id)[0].status, 'invalid_token');
-    assert.equal(
-      a.db.prepare('SELECT COUNT(*) n FROM devices WHERE token = ?').get('uninstalled').n,
-      0,
-      'a dead token was left registered'
-    );
+    assert.equal((await deliveries(a, me.id))[0].status, 'invalid_token');
+    const stillThere = await a.db.prepare('SELECT COUNT(*) n FROM devices WHERE token = ?').get('uninstalled');
+    assert.equal(Number(stillThere.n), 0, 'a dead token was left registered');
     // It is not retried - one attempt only.
     assert.equal(a.provider.calls, 1);
   });
@@ -285,7 +280,7 @@ describe('push dispatch', () => {
     await nudgeMe(friend, me, 'Water');
     await a.push.idle();
 
-    const rows = deliveries(a, me.id);
+    const rows = await deliveries(a, me.id);
     assert.equal(rows.length, 1, 'the path must stay observable even with no provider');
     assert.equal(rows[0].status, 'skipped');
     assert.equal(rows[0].provider, 'none');
@@ -331,6 +326,6 @@ describe('push dispatch', () => {
     const res = await nudgeMe(friend, me, 'Yoga');
     assert.equal(res.status, 201);
     await a.push.idle();
-    assert.equal(deliveries(a, me.id)[0].status, 'failed');
+    assert.equal((await deliveries(a, me.id))[0].status, 'failed');
   });
 });
