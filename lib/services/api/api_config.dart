@@ -18,6 +18,12 @@ class ApiConfig {
   static const String _androidDefault = 'http://10.0.2.2:8080';
   static const String _hostDefault = 'http://localhost:8080';
 
+  /// The real, hosted API (Render + Neon Postgres). Release builds go
+  /// straight here — a shipped app has no `localhost`/`10.0.2.2` to probe,
+  /// and trying them first would just waste a couple of seconds on every
+  /// cold start for no benefit.
+  static const String _productionDefault = 'https://habitpet-api.onrender.com';
+
   String? _override;
 
   /// Host discovered by [autoDetect], used when there is no explicit
@@ -32,10 +38,13 @@ class ApiConfig {
 
   /// Platform default, ignoring any override.
   ///
-  /// `kIsWeb` is checked first: `defaultTargetPlatform` reports the *browser's*
+  /// A release build always defaults to the real hosted API — there is no
+  /// dev server to guess at once this is installed on someone's device.
+  /// `kIsWeb` is checked next: `defaultTargetPlatform` reports the *browser's*
   /// host OS on web, so an Android phone browsing the web build would
   /// otherwise be handed the emulator address.
   static String get platformDefault {
+    if (kReleaseMode) return _productionDefault;
     if (kIsWeb) return _hostDefault;
     return defaultTargetPlatform == TargetPlatform.android
         ? _androidDefault
@@ -44,12 +53,16 @@ class ApiConfig {
 
   /// Candidate hosts to probe, best guess first.
   ///
-  /// On Android `localhost` comes first because that is what an `adb reverse
-  /// tcp:8080 tcp:8080` tunnel exposes on a **physical** handset, and a
-  /// physical device is the common case. On an emulator nothing is listening
-  /// there, so the probe fails fast and falls through to `10.0.2.2`, which is
-  /// the emulator's alias for the host machine.
+  /// Empty in a release build: there is nothing local worth probing for, and
+  /// trying anyway would just waste a couple of seconds on every cold start
+  /// before falling back to [platformDefault]. On Android `localhost` comes
+  /// first because that is what an `adb reverse tcp:8080 tcp:8080` tunnel
+  /// exposes on a **physical** handset, and a physical device is the common
+  /// case. On an emulator nothing is listening there, so the probe fails
+  /// fast and falls through to `10.0.2.2`, the emulator's alias for the host
+  /// machine.
   static List<String> get candidates {
+    if (kReleaseMode) return const <String>[];
     if (kIsWeb) return const <String>[_hostDefault];
     if (defaultTargetPlatform == TargetPlatform.android) {
       return const <String>[_hostDefault, _androidDefault];
