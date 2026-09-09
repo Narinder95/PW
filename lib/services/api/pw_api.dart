@@ -101,6 +101,11 @@ class PwApi {
   /// `POST /api/auth/logout` -> `204`. Revokes the token server-side.
   Future<void> logout() => client.post('/api/auth/logout');
 
+  /// `DELETE /api/me` -> `204`. Permanently deletes the account and
+  /// everything attached to it - not reversible, and not just this device's
+  /// session. Callers must confirm with the user before calling this.
+  Future<void> deleteAccount() => client.delete('/api/me');
+
   /// `GET /api/me` -> `200 {user}` (includes `email`).
   Future<UserProfile> me() async {
     final json = await client.get('/api/me');

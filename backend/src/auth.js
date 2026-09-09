@@ -7,9 +7,20 @@ import crypto from 'node:crypto';
 import { ApiError, newId, nowISO, requireString, normalizeColor, sendJson, sendNoContent } from './http.js';
 import { avatarColorFor, publicUser, privateUser } from './domain.js';
 import { UNIQUE_VIOLATION } from './db.js';
+import { clientIp } from './rate_limit.js';
 
 const SCRYPT_KEYLEN = 64;
 const USERNAME_RE = /^[a-z0-9_]+$/;
+
+// Exported so tests assert against the real configured limits instead of a
+// hand-copied number that silently drifts the next time these are tuned.
+export const REGISTER_RATE_LIMIT = { max: 60, windowMs: 60 * 60 * 1000 };
+export const ANONYMOUS_RATE_LIMIT = { max: 60, windowMs: 60 * 60 * 1000 };
+// Unlike register/login, /api/auth/link requires an authenticated session
+// already, so it isn't exposed to unauthenticated brute-force the same way -
+// a generous cap is enough to stop sustained automated abuse.
+export const LINK_RATE_LIMIT = { max: 50, windowMs: 60 * 60 * 1000 };
+export const LOGIN_RATE_LIMIT = { max: 10, windowMs: 15 * 60 * 1000 };
 
 export function hashPassword(password) {
   const salt = crypto.randomBytes(16);
@@ -299,9 +310,10 @@ export async function authenticate(db, req, url) {
 // ------------------------------------------------------------------- routes
 
 export function registerAuthRoutes(router, ctx) {
-  const { db } = ctx;
+  const { db, rateLimiter } = ctx;
 
-  router.post('/api/auth/register', async ({ res, body }) => {
+  router.post('/api/auth/register', async ({ req, res, body }) => {
+    rateLimiter.check(`register:${clientIp(req)}`, REGISTER_RATE_LIMIT);
     const user = await createUser(db, {
       username: body.username,
       name: body.name,
@@ -317,7 +329,8 @@ export function registerAuthRoutes(router, ctx) {
    * Provision an account with no credentials. This is what the app calls on
    * first launch instead of showing a sign-up screen.
    */
-  router.post('/api/auth/anonymous', async ({ res, body }) => {
+  router.post('/api/auth/anonymous', async ({ req, res, body }) => {
+    rateLimiter.check(`anonymous:${clientIp(req)}`, ANONYMOUS_RATE_LIMIT);
     const user = await createAnonymousUser(db, {
       name: body?.name,
       avatarColor: body?.avatarColor,
@@ -327,7 +340,8 @@ export function registerAuthRoutes(router, ctx) {
   });
 
   /** Claim the current anonymous account with an email and/or phone. */
-  router.post('/api/auth/link', async ({ res, body, me }) => {
+  router.post('/api/auth/link', async ({ req, res, body, me }) => {
+    rateLimiter.check(`link:${clientIp(req)}`, LINK_RATE_LIMIT);
     const updated = await linkCredentials(db, me.id, {
       email: body.email,
       phone: body.phone,
@@ -337,7 +351,8 @@ export function registerAuthRoutes(router, ctx) {
     sendJson(res, 200, { user: privateUser(updated) });
   }, { auth: true });
 
-  router.post('/api/auth/login', async ({ res, body }) => {
+  router.post('/api/auth/login', async ({ req, res, body }) => {
+    rateLimiter.check(`login:${clientIp(req)}`, LOGIN_RATE_LIMIT);
     const raw = body.usernameOrEmail;
     if (typeof raw !== 'string' || raw.trim().length === 0) {
       throw ApiError.validation('usernameOrEmail is required', 'usernameOrEmail');
@@ -371,6 +386,23 @@ export function registerAuthRoutes(router, ctx) {
 
   router.get('/api/me', async ({ res, me }) => {
     sendJson(res, 200, { user: privateUser(me) });
+  }, { auth: true });
+
+  /**
+   * Permanently deletes the caller's account and everything attached to it.
+   * `ON DELETE CASCADE` on the `users` FK handles habits, habit_logs,
+   * activities, friendships, friend_requests, nudges, notifications,
+   * devices, daily_steps and sessions - `push_deliveries` has no such FK
+   * (see db.js), so it's deleted explicitly. Both happen in one transaction:
+   * a delivery-history row for an account that no longer exists would be a
+   * dangling reference to nothing.
+   */
+  router.delete('/api/me', async ({ res, me }) => {
+    await db.withTransaction(async (tx) => {
+      await tx.prepare('DELETE FROM push_deliveries WHERE user_id = ?').run(me.id);
+      await tx.prepare('DELETE FROM users WHERE id = ?').run(me.id);
+    });
+    sendNoContent(res);
   }, { auth: true });
 
   router.patch('/api/me', async ({ res, body, me }) => {

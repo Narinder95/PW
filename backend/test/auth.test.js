@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { makeApp, makeUser } from './helpers.js';
-import { hashPassword, verifyPassword } from '../src/auth.js';
+import { makeApp, makeUser, addHabit, befriend } from './helpers.js';
+import { hashPassword, verifyPassword, REGISTER_RATE_LIMIT, LOGIN_RATE_LIMIT } from '../src/auth.js';
 
 test('auth', async (t) => {
   const app = await makeApp();
@@ -167,6 +167,27 @@ test('auth', async (t) => {
     assert.equal((await app.get('/api/me', { token: b.body.token })).status, 200);
   });
 
+  await t.test('DELETE /api/me removes the account and everything attached to it', async () => {
+    const me = await makeUser(app);
+    const friend = await makeUser(app);
+    await befriend(me, friend);
+    const habit = await addHabit(me, { name: 'Steps', target: 100, unit: 'steps' });
+    await me.post(`/api/habits/${habit.id}/log`, { body: { progress: 100 } });
+
+    const gone = await me.del('/api/me');
+    assert.equal(gone.status, 204);
+
+    // The token used to delete the account is dead - not just logged out of
+    // this device, the account itself no longer exists.
+    assert.equal((await me.get('/api/me')).status, 401);
+
+    // The friend no longer sees them as a friend or in their activity feed.
+    const friendsList = await friend.get('/api/friends');
+    assert.ok(!friendsList.body.friends.some((f) => f.id === me.id));
+    const activity = await friend.get('/api/activity');
+    assert.ok(!activity.body.activities.some((a) => a.friendId === me.id));
+  });
+
   await t.test('malformed JSON body -> 400, not 500', async () => {
     const res = await fetch(`${app.base}/api/auth/login`, {
       method: 'POST',
@@ -218,6 +239,70 @@ test('password hashing', async (t) => {
       const row = await app.db.prepare('SELECT * FROM users WHERE id = ?').get(u.id);
       assert.ok(!JSON.stringify(row).includes('sup3rSecretValue'));
       assert.match(row.password_hash, /^[0-9a-f]{32}:[0-9a-f]{128}$/);
+    } finally {
+      await app.close();
+    }
+  });
+});
+
+test('rate limiting', async (t) => {
+  // Each subtest gets its own fresh app/rate limiter (see server.js -
+  // rateLimiter is scoped per server instance precisely so tests do not
+  // trip each other's limits), so the exact call counts here are exact,
+  // not "however many other subtests happened to already run".
+  await t.test('login: one attempt past the configured max is rate-limited, not 401', async () => {
+    const app = await makeApp();
+    try {
+      await makeUser(app, { username: 'ratelimitlogin' });
+      for (let i = 0; i < LOGIN_RATE_LIMIT.max; i++) {
+        const res = await app.post('/api/auth/login', {
+          body: { usernameOrEmail: 'ratelimitlogin', password: 'wrong-password' },
+        });
+        assert.equal(res.status, 401, `attempt ${i + 1} should be a normal wrong-password 401`);
+      }
+      const blocked = await app.post('/api/auth/login', {
+        body: { usernameOrEmail: 'ratelimitlogin', password: 'wrong-password' },
+      });
+      assert.equal(blocked.status, 429);
+      assert.equal(blocked.body.error.code, 'rate_limited');
+      assert.ok(blocked.body.error.retryAfterSeconds > 0);
+    } finally {
+      await app.close();
+    }
+  });
+
+  await t.test('register: one attempt past the configured max is rate-limited', async () => {
+    const app = await makeApp();
+    try {
+      for (let i = 0; i < REGISTER_RATE_LIMIT.max; i++) {
+        const res = await app.post('/api/auth/register', {
+          body: { username: `ratelimitreg${i}`, name: 'X', email: `ratelimitreg${i}@example.com`, password: 'password123' },
+        });
+        assert.equal(res.status, 201, `attempt ${i + 1} should register cleanly`);
+      }
+      const blocked = await app.post('/api/auth/register', {
+        body: { username: 'ratelimitregover', name: 'X', email: 'ratelimitregover@example.com', password: 'password123' },
+      });
+      assert.equal(blocked.status, 429);
+    } finally {
+      await app.close();
+    }
+  });
+
+  await t.test('rate limits are scoped per IP-and-endpoint, not global', async () => {
+    const app = await makeApp();
+    try {
+      await makeUser(app, { username: 'scopedlimit' });
+      for (let i = 0; i < LOGIN_RATE_LIMIT.max; i++) {
+        await app.post('/api/auth/login', {
+          body: { usernameOrEmail: 'scopedlimit', password: 'wrong-password' },
+        });
+      }
+      // login is now exhausted, but register - a different key - is not.
+      const stillOk = await app.post('/api/auth/register', {
+        body: { username: 'notlimited', name: 'X', email: 'notlimited@example.com', password: 'password123' },
+      });
+      assert.equal(stillOk.status, 201);
     } finally {
       await app.close();
     }

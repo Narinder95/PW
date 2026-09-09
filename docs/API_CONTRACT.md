@@ -282,6 +282,19 @@ are optional and only ever collected later, to make the account recoverable.
 | POST | `/api/auth/logout` | - | `204` |
 | GET | `/api/me` | - | `200 {user}` |
 | PATCH | `/api/me` | `{name?, avatarColor?}` | `200 {user}` |
+| DELETE | `/api/me` | - | `204` |
+
+`DELETE /api/me` permanently deletes the account and everything attached to
+it (habits, logs, activities, friendships, friend requests, nudges,
+notifications, devices, step history, sessions) - not reversible, and not
+just this device's session. There is no separate confirmation step in the
+API itself; the client is responsible for confirming with the user first.
+
+`POST /api/auth/register`, `/login`, `/anonymous` and `/link` are rate
+limited per IP (`429 rate_limited` with `retryAfterSeconds` past the limit) -
+generous enough not to bother a real user, tight enough to blunt scripted
+abuse. Limits live in `backend/src/auth.js` (`REGISTER_RATE_LIMIT`, etc.),
+not repeated here since they're tuned from time to time.
 
 `POST /api/auth/anonymous` takes no credentials. It mints a readable handle
 (`swift_otter1234`), a display name and an avatar colour. The returned account

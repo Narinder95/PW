@@ -15,11 +15,12 @@ import { registerMatchRoutes } from './routes/match.js';
 import { registerActivityRoutes } from './routes/activity.js';
 import { registerDeviceRoutes } from './routes/devices.js';
 import { registerStepsRoutes } from './routes/steps.js';
+import { createRateLimiter } from './rate_limit.js';
 
 export const API_VERSION = '1';
 
 /**
- * @param {object} db  an open node:sqlite DatabaseSync
+ * @param {object} db  an open db.js `Db` (Postgres-backed; see db.js)
  * @param {object} [options]
  * @param {object} [options.pushProvider]  overrides PUSH_PROVIDER selection
  * @param {number[]} [options.retryDelays] push retry backoff (ms)
@@ -34,8 +35,12 @@ export function createServer(db, options = {}) {
     logger,
     ...(options.retryDelays ? { retryDelays: options.retryDelays } : {}),
   });
+  // Scoped per server instance, not a module-level singleton: every test
+  // file spins up its own server on 127.0.0.1, and a shared global limiter
+  // would let one file's login/register attempts trip another's limit.
+  const rateLimiter = createRateLimiter();
 
-  const ctx = { db, hub, push, provider, logger };
+  const ctx = { db, hub, push, provider, logger, rateLimiter };
   const router = new Router();
 
   router.get('/api/health', async ({ res }) => {
@@ -122,6 +127,7 @@ export function createServer(db, options = {}) {
   server.on('close', () => {
     hub.closeAll();
     push.close();
+    rateLimiter.close();
   });
 
   // Exposed for tests and for index.js.

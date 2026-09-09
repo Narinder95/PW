@@ -146,7 +146,50 @@ class _ProfileScreenState extends State<ProfileScreen> {
             _unclaimedCard(t)
           else
             _claimedCard(t, profile),
+          const SizedBox(height: 24),
+          _deleteAccountSection(t),
         ],
+      ),
+    );
+  }
+
+  /// Deliberately separate from, and visually distinct from, the sign-out
+  /// affordance above: this is permanent and available regardless of whether
+  /// the account is anonymous or claimed - both own real data worth being
+  /// able to erase.
+  Widget _deleteAccountSection(JournalTheme t) {
+    return Container(
+      decoration: BoxDecoration(
+        color: t.surface,
+        borderRadius: BorderRadius.circular(JournalTheme.radiusTile),
+        border: Border.all(color: t.outline),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: _confirmDeleteAccount,
+          borderRadius: BorderRadius.circular(JournalTheme.radiusTile),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            child: Row(
+              children: [
+                const Icon(Icons.delete_forever_outlined, color: Colors.red, size: 20),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Text(
+                    'Delete account',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.red,
+                    ),
+                  ),
+                ),
+                Icon(Icons.chevron_right, color: t.textMuted, size: 20),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -347,5 +390,59 @@ class _ProfileScreenState extends State<ProfileScreen> {
     // server-side before clearing local state; `main.dart` then swaps in the
     // login screen.
     await services.auth.logout();
+  }
+
+  Future<void> _confirmDeleteAccount() async {
+    final t = JournalTheme.of(context);
+    final services = _services;
+    if (services == null) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: t.background,
+        surfaceTintColor: Colors.transparent,
+        title: const Text(
+          'Delete account?',
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.red),
+        ),
+        content: Text(
+          'This permanently deletes your habits, streaks, friends and '
+          'notifications. This cannot be undone.',
+          style: TextStyle(color: t.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            style: TextButton.styleFrom(foregroundColor: t.textSecondary),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+              elevation: 0,
+            ),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Delete permanently'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      await services.auth.deleteAccount();
+    } on ApiException catch (error) {
+      // Unlike sign-out, this must NOT clear local state on failure - the
+      // account still exists server-side, and pretending it's gone would
+      // strand the user in a signed-out state for an account that is still
+      // there and still theirs.
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not delete account: ${error.message}')),
+      );
+    }
   }
 }

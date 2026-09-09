@@ -242,6 +242,25 @@ class AuthService extends ChangeNotifier {
     _applySignedOut();
   }
 
+  /// Permanently deletes the account and everything attached to it, then
+  /// signs out locally the same way [logout] does.
+  ///
+  /// Unlike [logout], the server call is **not** best-effort: if
+  /// `DELETE /api/me` fails, the account still exists server-side, so local
+  /// state must not be cleared as though it were gone. The caller (a
+  /// confirmation dialog) is expected to have already gotten the user's
+  /// explicit consent — this does not ask again.
+  Future<void> deleteAccount() async {
+    // Retire the push token first, same reasoning as logout(): the DELETE
+    // below invalidates the session, so this must happen while it still works.
+    await pushService?.unregisterDevice();
+
+    await api.deleteAccount();
+
+    await _clearStoredToken();
+    _applySignedOut();
+  }
+
   /// Updates the signed-in user's own profile and refreshes local state.
   Future<UserProfile> updateProfile({String? name, Color? avatarColor}) async {
     final updated = await api.updateMe(name: name, avatarColor: avatarColor);
