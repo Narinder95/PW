@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 
 import 'screens/friends_screen.dart';
@@ -22,11 +23,11 @@ import 'widgets/notification_banner.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // TODO(release): Firebase.initializeApp() goes here, before anything touches
-  // FirebaseMessaging — see StubPushTokenSource's release note in
-  // lib/services/push_service.dart. The client swap is then one line: pass
-  // `tokenSource: FirebaseMessagingTokenSource()` to the PushService below.
-  //   await Firebase.initializeApp();
+  // Must happen before anything touches FirebaseMessaging (PushService below
+  // reads FirebaseMessaging.instance as soon as it's constructed). Reads
+  // android/app/google-services.json / ios/Runner/GoogleService-Info.plist —
+  // see docs/PUSH_SETUP.md.
+  await Firebase.initializeApp();
 
   // Pick up a persisted base-URL override before the first request is made,
   // so a QA build pointed at staging never briefly talks to localhost.
@@ -75,8 +76,7 @@ class _PwAppState extends State<PwApp> {
 
     final push = PushService(
       api: api,
-      // Explicit, so the release swap is exactly this one argument.
-      tokenSource: const StubPushTokenSource(),
+      tokenSource: FirebaseMessagingTokenSource(),
     );
 
     final auth = AuthService(client: client, api: api, pushService: push);

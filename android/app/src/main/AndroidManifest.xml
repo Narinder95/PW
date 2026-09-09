@@ -72,4 +72,8 @@
          device's built-in step-counter sensor directly when Health Connect
          has no synced data (e.g. Samsung Health isn't connected to it). -->
     <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+    <!-- Android 13+ requires this runtime permission before a notification
+         tray icon can be shown at all. PushService.ensurePermission() already
+         drives the request flow via firebase_messaging. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 </manifest>

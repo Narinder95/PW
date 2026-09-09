@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 
 import '../models/app_notification.dart';
@@ -149,27 +150,7 @@ abstract class PushTokenSource {
 /// Every call succeeds and does nothing, so the entire push path runs in
 /// development and in tests without Firebase installed. A null token makes
 /// `PushService.registerDevice()` a silent no-op — never an error the user
-/// sees.
-///
-/// TODO(release): replace with `FirebaseMessagingTokenSource`, which is the
-/// only new code this feature needs. It must:
-///   1. `await Firebase.initializeApp()` before anything else (do this in
-///      `main()`, not here).
-///   2. `getToken()`          -> `FirebaseMessaging.instance.getToken()`
-///   3. `onTokenRefresh`      -> `FirebaseMessaging.instance.onTokenRefresh`
-///   4. `requestPermission()` -> `FirebaseMessaging.instance.requestPermission()`,
-///      returning `settings.authorizationStatus == AuthorizationStatus.authorized
-///      || ... .provisional`. This also covers the Android 13+
-///      `POST_NOTIFICATIONS` runtime prompt.
-///   5. `onForegroundMessage`    -> `FirebaseMessaging.onMessage`, mapped with
-///      `PushMessage.fromData(m.data, title: m.notification?.title,
-///      body: m.notification?.body)`.
-///   6. `onNotificationOpened`   -> `FirebaseMessaging.onMessageOpenedApp`,
-///      mapped the same way.
-///   7. `initialMessage()`       -> `FirebaseMessaging.instance.getInitialMessage()`,
-///      returning null on every call after the first.
-/// Plus `firebase_core` / `firebase_messaging` in pubspec.yaml and the two
-/// platform config files listed in `docs/PUSH_SETUP.md` section 1.
+/// sees. See [FirebaseMessagingTokenSource] for the real implementation.
 class StubPushTokenSource extends PushTokenSource {
   const StubPushTokenSource();
 
@@ -183,6 +164,67 @@ class StubPushTokenSource extends PushTokenSource {
   /// Callers must treat false as "no push", not as an error.
   @override
   Future<bool> requestPermission() async => false;
+}
+
+/// The real [PushTokenSource], backed by Firebase Cloud Messaging.
+///
+/// Requires `await Firebase.initializeApp()` to have already run (done once
+/// in `main()`, before this class or anything else touches
+/// `FirebaseMessaging` — see the platform config files under
+/// `android/app/google-services.json` and
+/// `ios/Runner/GoogleService-Info.plist`, and `docs/PUSH_SETUP.md`).
+class FirebaseMessagingTokenSource extends PushTokenSource {
+  FirebaseMessagingTokenSource();
+
+  final FirebaseMessaging _messaging = FirebaseMessaging.instance;
+
+  /// `getInitialMessage()` keeps returning the same cold-start message on
+  /// every call - the contract this class implements requires it be
+  /// consumed exactly once, so a local flag tracks whether that has
+  /// happened yet.
+  bool _initialMessageConsumed = false;
+
+  @override
+  Future<String?> getToken() => _messaging.getToken();
+
+  @override
+  Stream<String> get onTokenRefresh => _messaging.onTokenRefresh;
+
+  @override
+  Future<bool> requestPermission() async {
+    final settings = await _messaging.requestPermission();
+    return settings.authorizationStatus == AuthorizationStatus.authorized ||
+        settings.authorizationStatus == AuthorizationStatus.provisional;
+  }
+
+  @override
+  Stream<PushMessage> get onForegroundMessage => FirebaseMessaging.onMessage
+      .map((m) => PushMessage.fromData(
+            m.data,
+            title: m.notification?.title,
+            body: m.notification?.body,
+          ));
+
+  @override
+  Stream<PushMessage> get onNotificationOpened =>
+      FirebaseMessaging.onMessageOpenedApp.map((m) => PushMessage.fromData(
+            m.data,
+            title: m.notification?.title,
+            body: m.notification?.body,
+          ));
+
+  @override
+  Future<PushMessage?> initialMessage() async {
+    if (_initialMessageConsumed) return null;
+    _initialMessageConsumed = true;
+    final message = await _messaging.getInitialMessage();
+    if (message == null) return null;
+    return PushMessage.fromData(
+      message.data,
+      title: message.notification?.title,
+      body: message.notification?.body,
+    );
+  }
 }
 
 /// Owns the client half of push notifications.

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "305335873541",
+    "project_id": "habitpet-d53d3",
+    "storage_bucket": "habitpet-d53d3.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:305335873541:android:d292ea6f008bc1650a2c6c",
+        "android_client_info": {
+          "package_name": "com.habitpet.health"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAUGRJBIX_q-Lxgf2T8KPnuotmiMsf4XNU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
