@@ -64,6 +64,14 @@
             <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
         </intent>
     </queries>
+    <!-- The app's own networking: talking to the HabitPet backend (habits,
+         friends, auth, push registration - everything). This is distinct
+         from the debug/profile-only INTERNET permission Flutter's template
+         adds elsewhere for its dev tooling (hot reload etc.) - that one does
+         NOT carry into a release build, so without this line here a release
+         build has no network access at all despite working fine under
+         `flutter run`. -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <!-- Walking challenge: read-only access to the device's daily step count
          via Health Connect. Without this the plugin's requestAuthorization()
          silently returns false. -->
