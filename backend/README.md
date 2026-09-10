@@ -207,19 +207,47 @@ that created the notification.** Failures retry twice (1s, 4s); an
 **What you must supply at release, and where it goes: `docs/PUSH_SETUP.md`.**
 Never commit `backend/secrets/`.
 
+## Password reset & email verification
+
+Both use the same provider shape as push, in `src/mail/`. Select with
+`MAIL_PROVIDER`:
+
+| value | behaviour |
+|---|---|
+| `none` *(default)* | no-op — requests are accepted but no mail goes out |
+| `log` | prints the rendered message — see a token with no credentials |
+| `memory` | in-process capture, used by the tests |
+| `resend` | real transactional email via [Resend](https://resend.com)'s HTTP API (needs `RESEND_API_KEY` + `MAIL_FROM`) |
+
+`POST /api/auth/password-reset/request` always returns `204` regardless of
+whether the email is registered, so the endpoint can't be used to enumerate
+accounts. `POST /api/auth/password-reset/confirm` redeems the one-time,
+1-hour token and — since a reset is a credible signal the old password leaked
+— deletes every existing session for that account.
+
+Email verification is **soft**: `register` and `link` each fire off a
+24-hour token automatically, `POST /api/auth/verify-email/resend` (auth
+required) sends another, and `POST /api/auth/verify-email/confirm {token}`
+redeems it — but nothing is gated on `users.email_verified` being true. There
+is no login screen to put a "verify to continue" wall in front of; this
+exists so a typo'd address is discoverable (via `/api/me`'s `emailVerified`)
+rather than silently broken until a password reset fails to arrive.
+
 ## Tests
 
 ```bash
 npm test
 ```
 
-136 tests across 11 suites, all against an in-memory database and a real HTTP
-server on an ephemeral port — no fixtures on disk, no network, no ordering
-dependencies between tests.
+205 tests across 13 files, run against a real Postgres database (a
+throwaway schema per test file — see `test/helpers.js`) and a real HTTP
+server on an ephemeral port, with no ordering dependencies between tests.
 
 | suite | covers |
 |---|---|
 | `auth` | registration/login validation, token lifecycle, password hashing, no user enumeration, malformed JSON, CORS |
+| `password_reset` | request/confirm flow, no-enumeration, token expiry/replay, session invalidation, rate limiting |
+| `email_verification` | auto-send on register/link, resend idempotency, confirm flow, token expiry/replay, rate limiting |
 | `habits` | CRUD, log-sets-not-increments, exactly-one-activity on completion, weekData layout, streak maths |
 | `friends` | list ordering, detail, habit status, unfriending both directions, zero-habit friends |
 | `requests` | full lifecycle, decline, cancel, reciprocal auto-accept, permission rules |
@@ -248,18 +276,30 @@ src/
     index.js        provider selection + the dispatcher
     providers.js    none / log / memory
     fcm.js          FCM HTTP v1, JWT signing, token cache
+  mail/
+    index.js        provider selection (password reset, email verification)
+    providers.js    none / log / memory
+    resend.js       Resend HTTP API
   routes/           habits, friends, requests, nudges, notifications, match, activity, devices
 test/               node:test suites + helpers.js (in-memory app factory)
 ```
 
 ## Security notes
 
-Appropriate for development, **not** for public deployment as-is:
-
 - Passwords are scrypt-hashed with a per-user salt and compared in constant
   time; plaintext is never stored or logged (there is a test asserting this).
-- Session tokens are 32 random bytes, revoked on logout.
-- CORS is permissive for local development — lock it down before shipping.
-- There is no rate limiting on login, no password reset, and no email
-  verification. Add these before exposing the server to the internet.
-- Serve over TLS in production; tokens are bearer credentials.
+- Session tokens are 32 random bytes, revoked on logout and on password reset.
+- Register/login/anonymous/link/password-reset/verify-email are all rate
+  limited (per IP, except `verify-email/resend` which is authenticated and
+  limited per account instead).
+- CORS reflects `Origin` only for local dev hosts (`localhost`/`127.0.0.1`,
+  any port) and any extra origins listed in `CORS_ALLOWED_ORIGINS`
+  (comma-separated) — everything else gets no `Access-Control-Allow-Origin`
+  header, so a browser on another origin can't read the response. This has no
+  effect on the Flutter mobile app itself: native HTTP clients don't send
+  `Origin` and aren't subject to CORS at all, which is browser-enforced.
+- Password reset (`/api/auth/password-reset/*`) and email verification
+  (`/api/auth/verify-email/*`) both exist. Verification is soft — nothing is
+  gated on it — so it surfaces a typo'd address rather than preventing one.
+- Render terminates TLS in front of the server; tokens are bearer credentials,
+  so don't put this behind a plain-HTTP proxy.

@@ -21,6 +21,21 @@ export const ANONYMOUS_RATE_LIMIT = { max: 60, windowMs: 60 * 60 * 1000 };
 // a generous cap is enough to stop sustained automated abuse.
 export const LINK_RATE_LIMIT = { max: 50, windowMs: 60 * 60 * 1000 };
 export const LOGIN_RATE_LIMIT = { max: 10, windowMs: 15 * 60 * 1000 };
+// Requesting a reset reveals nothing (see requestPasswordReset), so this
+// limit exists purely to blunt mail-bombing an address, not brute force.
+export const RESET_REQUEST_RATE_LIMIT = { max: 5, windowMs: 60 * 60 * 1000 };
+// Guessing a 32-byte token isn't feasible in this window; the limit is just
+// standard abuse-blunting for an unauthenticated endpoint.
+export const RESET_CONFIRM_RATE_LIMIT = { max: 20, windowMs: 60 * 60 * 1000 };
+export const RESET_TOKEN_TTL_MS = 60 * 60 * 1000;
+
+// Authenticated (the caller already proved who they are), so this exists to
+// blunt "click resend a thousand times" rather than to stop brute force.
+export const EMAIL_VERIFY_RESEND_RATE_LIMIT = { max: 5, windowMs: 60 * 60 * 1000 };
+export const EMAIL_VERIFY_CONFIRM_RATE_LIMIT = { max: 20, windowMs: 60 * 60 * 1000 };
+// Longer-lived than a password reset token: verifying is not time-sensitive
+// the way "someone may have your password right now" is.
+export const EMAIL_VERIFY_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 
 export function hashPassword(password) {
   const salt = crypto.randomBytes(16);
@@ -285,6 +300,114 @@ export async function linkCredentials(db, userId, { email, phone, password, user
   return db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
 }
 
+function hashResetToken(raw) {
+  return crypto.createHash('sha256').update(raw).digest('hex');
+}
+
+/**
+ * Start a password reset for `email`, if it belongs to a claimed account.
+ *
+ * Always resolves with no result and never throws for "no such account" -
+ * an unknown email, an anonymous account (no password to reset) and a
+ * successful send must all be indistinguishable to the caller, or the
+ * endpoint becomes an account-enumeration oracle. A mail-provider failure is
+ * logged, not surfaced, for the same reason.
+ */
+export async function requestPasswordReset(db, mail, logger, rawEmail) {
+  const email = typeof rawEmail === 'string' ? rawEmail.trim().toLowerCase() : '';
+  if (!email) throw ApiError.validation('email is required', 'email');
+
+  const user = await db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+  if (!user || !user.password_hash) return;
+
+  const raw = crypto.randomBytes(32).toString('hex');
+  await db.prepare(
+    `INSERT INTO password_reset_tokens (token_hash, user_id, expires_at, used_at, created_at)
+     VALUES (?, ?, ?, NULL, ?)`
+  ).run(hashResetToken(raw), user.id, new Date(Date.now() + RESET_TOKEN_TTL_MS).toISOString(), nowISO());
+
+  try {
+    await mail.send({
+      to: user.email,
+      subject: 'Reset your PW password',
+      text: `Use this code within the next hour to reset your password:\n\n${raw}\n\n` +
+        `If you didn't request this, you can ignore this email.`,
+    });
+  } catch (err) {
+    logger.error('[auth] password reset mail send failed:', err?.message ?? err);
+  }
+}
+
+/** Redeem a reset token minted by [requestPasswordReset], setting a new password. */
+export async function confirmPasswordReset(db, { token, password }) {
+  if (typeof token !== 'string' || token.length === 0) {
+    throw ApiError.validation('token is required', 'token');
+  }
+  const pw = validatePassword(password);
+
+  const tokenHash = hashResetToken(token);
+  const row = await db.prepare('SELECT * FROM password_reset_tokens WHERE token_hash = ?').get(tokenHash);
+  if (!row || row.used_at || new Date(row.expires_at).getTime() < Date.now()) {
+    throw ApiError.validation('This reset link is invalid or has expired', 'token');
+  }
+
+  await db.withTransaction(async (tx) => {
+    await tx.prepare('UPDATE password_reset_tokens SET used_at = ? WHERE token_hash = ?').run(nowISO(), tokenHash);
+    await tx.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(pw), row.user_id);
+    // A reset is a credible signal the old password was compromised - burn
+    // every existing session so a stolen one can't ride along.
+    await tx.prepare('DELETE FROM sessions WHERE user_id = ?').run(row.user_id);
+  });
+}
+
+function hashVerifyToken(raw) {
+  return crypto.createHash('sha256').update(raw).digest('hex');
+}
+
+/**
+ * Mint and email a fresh verification token for `user`. Called right after
+ * register/link, and from POST /api/auth/verify-email/resend.
+ *
+ * Fully self-contained failure handling - unlike requestPasswordReset (which
+ * must stay silent to avoid enumeration), there's no secrecy requirement
+ * here, but a DB hiccup or mail outage on this side quest still must never
+ * fail the register/link request that triggered it.
+ */
+export async function sendVerificationEmail(db, mail, logger, user) {
+  if (!user.email) return;
+  try {
+    const raw = crypto.randomBytes(32).toString('hex');
+    await db.prepare(
+      `INSERT INTO email_verification_tokens (token_hash, user_id, expires_at, used_at, created_at)
+       VALUES (?, ?, ?, NULL, ?)`
+    ).run(hashVerifyToken(raw), user.id, new Date(Date.now() + EMAIL_VERIFY_TOKEN_TTL_MS).toISOString(), nowISO());
+    await mail.send({
+      to: user.email,
+      subject: 'Verify your PW email',
+      text: `Use this code within the next 24 hours to verify your email:\n\n${raw}\n\n` +
+        `If you didn't request this, you can ignore this email.`,
+    });
+  } catch (err) {
+    logger.error('[auth] could not send verification email:', err?.message ?? err);
+  }
+}
+
+/** Redeem a token minted by [sendVerificationEmail], marking the owning account verified. */
+export async function confirmEmailVerification(db, token) {
+  if (typeof token !== 'string' || token.length === 0) {
+    throw ApiError.validation('token is required', 'token');
+  }
+  const tokenHash = hashVerifyToken(token);
+  const row = await db.prepare('SELECT * FROM email_verification_tokens WHERE token_hash = ?').get(tokenHash);
+  if (!row || row.used_at || new Date(row.expires_at).getTime() < Date.now()) {
+    throw ApiError.validation('This verification link is invalid or has expired', 'token');
+  }
+  await db.withTransaction(async (tx) => {
+    await tx.prepare('UPDATE email_verification_tokens SET used_at = ? WHERE token_hash = ?').run(nowISO(), tokenHash);
+    await tx.prepare('UPDATE users SET email_verified = 1 WHERE id = ?').run(row.user_id);
+  });
+}
+
 /** Resolve a bearer token (header or ?token=) to a user row. */
 export async function authenticate(db, req, url) {
   const header = req.headers['authorization'] ?? req.headers['Authorization'];
@@ -310,7 +433,7 @@ export async function authenticate(db, req, url) {
 // ------------------------------------------------------------------- routes
 
 export function registerAuthRoutes(router, ctx) {
-  const { db, rateLimiter } = ctx;
+  const { db, rateLimiter, mail, logger } = ctx;
 
   router.post('/api/auth/register', async ({ req, res, body }) => {
     rateLimiter.check(`register:${clientIp(req)}`, REGISTER_RATE_LIMIT);
@@ -322,6 +445,7 @@ export function registerAuthRoutes(router, ctx) {
       avatarColor: body.avatarColor,
     });
     const token = await createSession(db, user.id);
+    await sendVerificationEmail(db, mail, logger, user);
     sendJson(res, 201, { token, user: publicUser(user) });
   });
 
@@ -348,6 +472,7 @@ export function registerAuthRoutes(router, ctx) {
       password: body.password,
       username: body.username,
     });
+    await sendVerificationEmail(db, mail, logger, updated);
     sendJson(res, 200, { user: privateUser(updated) });
   }, { auth: true });
 
@@ -375,6 +500,33 @@ export function registerAuthRoutes(router, ctx) {
     }
     const token = await createSession(db, user.id);
     sendJson(res, 200, { token, user: publicUser(user) });
+  });
+
+  /** Always 204, whether or not the email is registered - see requestPasswordReset. */
+  router.post('/api/auth/password-reset/request', async ({ req, res, body }) => {
+    rateLimiter.check(`password-reset-request:${clientIp(req)}`, RESET_REQUEST_RATE_LIMIT);
+    await requestPasswordReset(db, mail, logger, body.email);
+    sendNoContent(res);
+  });
+
+  router.post('/api/auth/password-reset/confirm', async ({ req, res, body }) => {
+    rateLimiter.check(`password-reset-confirm:${clientIp(req)}`, RESET_CONFIRM_RATE_LIMIT);
+    await confirmPasswordReset(db, { token: body.token, password: body.password });
+    sendNoContent(res);
+  });
+
+  /** Re-send the verification email. A no-op (still 204) once already verified. */
+  router.post('/api/auth/verify-email/resend', async ({ req, res, me }) => {
+    rateLimiter.check(`verify-email-resend:${me.id}`, EMAIL_VERIFY_RESEND_RATE_LIMIT);
+    if (!me.email) throw ApiError.validation('This account has no email to verify', 'email');
+    if (!me.email_verified) await sendVerificationEmail(db, mail, logger, me);
+    sendNoContent(res);
+  }, { auth: true });
+
+  router.post('/api/auth/verify-email/confirm', async ({ req, res, body }) => {
+    rateLimiter.check(`verify-email-confirm:${clientIp(req)}`, EMAIL_VERIFY_CONFIRM_RATE_LIMIT);
+    await confirmEmailVerification(db, body.token);
+    sendNoContent(res);
   });
 
   router.post('/api/auth/logout', async ({ res, token, me }) => {

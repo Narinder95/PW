@@ -6,6 +6,7 @@
 import { openDb, dropSchema, randomSchemaName } from '../src/db.js';
 import { createServer } from '../src/server.js';
 import { MemoryProvider } from '../src/push/providers.js';
+import { MemoryProvider as MemoryMailProvider } from '../src/mail/providers.js';
 
 const DATABASE_URL = process.env.DATABASE_URL;
 if (!DATABASE_URL) {
@@ -27,9 +28,11 @@ export async function makeApp(options = {}) {
   const schema = randomSchemaName();
   const db = await openDb(DATABASE_URL, { schema });
   const provider = options.provider ?? new MemoryProvider();
+  const mailProvider = options.mailProvider ?? new MemoryMailProvider();
   const logger = options.logger ?? captureLogger();
   const server = createServer(db, {
     pushProvider: provider,
+    mailProvider,
     // Tiny backoff so retry tests do not take 5 real seconds.
     retryDelays: options.retryDelays ?? [1, 2],
     logger,
@@ -64,6 +67,7 @@ export async function makeApp(options = {}) {
     db,
     server,
     provider,
+    mailProvider,
     logger,
     base,
     api,

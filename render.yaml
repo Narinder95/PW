@@ -19,4 +19,12 @@ services:
         # The file itself is a Render "Secret File" (Environment tab -> Secret
         # Files), not a plain env var - it's the private key that lets the
         # backend send pushes and must never go in git (see docs/PUSH_SETUP.md).
+      # MAIL_PROVIDER defaults to "none" (password-reset and email-verification
+      # requests are accepted but no mail goes out) until RESEND_API_KEY +
+      # MAIL_FROM are supplied - see backend/README.md's "Password reset &
+      # email verification" section. Add those two keys here and set
+      # MAIL_PROVIDER=resend to turn it on.
+      # CORS_ALLOWED_ORIGINS is only needed if a browser-based client (a
+      # Flutter web build, a staging dashboard) is ever added; the mobile app
+      # itself sends no Origin header and is unaffected either way.
     healthCheckPath: /api/health

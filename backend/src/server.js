@@ -6,6 +6,7 @@ import { Router } from './router.js';
 import { authenticate, registerAuthRoutes } from './auth.js';
 import { SseHub } from './notifications.js';
 import { createPushProvider, PushDispatcher } from './push/index.js';
+import { createMailProvider } from './mail/index.js';
 import { registerHabitRoutes } from './routes/habits.js';
 import { registerFriendRoutes } from './routes/friends.js';
 import { registerRequestRoutes } from './routes/requests.js';
@@ -23,12 +24,14 @@ export const API_VERSION = '1';
  * @param {object} db  an open db.js `Db` (Postgres-backed; see db.js)
  * @param {object} [options]
  * @param {object} [options.pushProvider]  overrides PUSH_PROVIDER selection
+ * @param {object} [options.mailProvider]  overrides MAIL_PROVIDER selection
  * @param {number[]} [options.retryDelays] push retry backoff (ms)
  */
 export function createServer(db, options = {}) {
   const logger = options.logger ?? console;
   const hub = new SseHub({ pingIntervalMs: options.pingIntervalMs, logger });
   const provider = options.pushProvider ?? createPushProvider(options.env ?? process.env, logger);
+  const mail = options.mailProvider ?? createMailProvider(options.env ?? process.env, logger);
   const push = new PushDispatcher({
     db,
     provider,
@@ -40,7 +43,7 @@ export function createServer(db, options = {}) {
   // would let one file's login/register attempts trip another's limit.
   const rateLimiter = createRateLimiter();
 
-  const ctx = { db, hub, push, provider, logger, rateLimiter };
+  const ctx = { db, hub, push, provider, mail, logger, rateLimiter };
   const router = new Router();
 
   router.get('/api/health', async ({ res }) => {
@@ -68,7 +71,7 @@ export function createServer(db, options = {}) {
   });
 
   async function handle(req, res) {
-    applyCors(res);
+    applyCors(res, req);
 
     if (req.method === 'OPTIONS') {
       res.writeHead(204);
@@ -135,6 +138,7 @@ export function createServer(db, options = {}) {
   server.hub = hub;
   server.push = push;
   server.provider = provider;
+  server.mail = mail;
   server.router = router;
   return server;
 }

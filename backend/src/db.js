@@ -10,7 +10,10 @@ import crypto from 'node:crypto';
 //     be *claimed* by linking an email and/or phone. `email` and
 //     `password_hash` therefore became nullable, and `phone` / `is_anonymous`
 //     were added.
-const SCHEMA_VERSION = 2;
+// v3: added password_reset_tokens for POST /api/auth/password-reset/*.
+// v4: added users.email_verified + email_verification_tokens for
+//     POST /api/auth/verify-email/*.
+const SCHEMA_VERSION = 4;
 
 const DDL = `
 CREATE TABLE IF NOT EXISTS meta (
@@ -28,6 +31,7 @@ CREATE TABLE IF NOT EXISTS users (
   phone          TEXT UNIQUE,
   password_hash  TEXT,                    -- scrypt: "<saltHex>:<hashHex>"
   is_anonymous   INTEGER NOT NULL DEFAULT 1,
+  email_verified INTEGER NOT NULL DEFAULT 0,
   avatar_color   TEXT NOT NULL,
   created_at     TEXT NOT NULL,
   last_active_at TEXT NOT NULL
@@ -44,6 +48,32 @@ CREATE TABLE IF NOT EXISTS sessions (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+
+-- token_hash is sha256(raw token) - like password_hash, the raw, emailed
+-- token itself is never stored, so a DB read alone can't be used to reset
+-- someone's password. One row per outstanding request; a used or expired row
+-- is kept (not deleted) so a replay attempt still resolves to a clean 400.
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  token_hash TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires_at TEXT NOT NULL,
+  used_at    TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id);
+
+-- Same shape as password_reset_tokens. Verification is soft: an unverified
+-- email doesn't block anything today (there's no login gate to enforce it
+-- against — see the house rule in CLAUDE.md), it's just surfaced via
+-- users.email_verified / privateUser().emailVerified for the client to nudge.
+CREATE TABLE IF NOT EXISTS email_verification_tokens (
+  token_hash TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires_at TEXT NOT NULL,
+  used_at    TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_email_verification_tokens_user ON email_verification_tokens(user_id);
 
 CREATE TABLE IF NOT EXISTS habits (
   id         TEXT PRIMARY KEY,
@@ -369,6 +399,7 @@ export async function migrate(db) {
   // added after a table's first deploy needs its own explicit step here.
   await db.exec('ALTER TABLE activities ADD COLUMN IF NOT EXISTS seq BIGSERIAL;');
   await db.exec('ALTER TABLE notifications ADD COLUMN IF NOT EXISTS seq BIGSERIAL;');
+  await db.exec('ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified INTEGER NOT NULL DEFAULT 0;');
   await db
     .prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
     .run('schema_version', String(SCHEMA_VERSION));

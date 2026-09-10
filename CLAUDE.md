@@ -35,7 +35,7 @@ PW/
 │   └── utils/                 # journal_theme.dart (design tokens)
 ├── backend/                    # Node 24 API server, ZERO npm dependencies
 │   ├── src/                    # routes/, push/, db, router, domain
-│   └── test/                   # node:test suites (136 tests)
+│   └── test/                   # node:test suites (205 tests)
 ├── test/                       # Flutter tests (54)
 ├── docs/                       # API_CONTRACT, FRIENDS_UX_SPEC, PUSH_SETUP,
 │                               #   FRIENDS_FEATURE
@@ -88,7 +88,7 @@ machine's LAN IP.
 
 ```bash
 flutter test          # 54 tests
-cd backend && npm test # 136 tests
+cd backend && npm test # 205 tests
 ```
 
 `flutter analyze` must stay at **0 errors, 0 warnings**.
@@ -115,8 +115,16 @@ and skips itself when no server is running.
 
 1. Supply Firebase/APNs credentials and verify push on a real device
    (`docs/PUSH_SETUP.md`)
-2. Harden the backend before any public deployment (CORS, login rate limiting,
-   TLS, password reset)
+2. Backend hardening is done: CORS is origin-restricted, and password reset
+   + email verification both exist (`POST /api/auth/password-reset/*` and
+   `/api/auth/verify-email/*`; `MAIL_PROVIDER` in `backend/src/mail/` — same
+   `none`/`log`/real-provider shape as push, `none` until `RESEND_API_KEY`/
+   `MAIL_FROM` are supplied). Login rate limiting and TLS (Render-terminated)
+   were already done. Verification is soft (nothing is gated on it — there's
+   no login screen to gate). What's left is non-code: the privacy policy
+   draft (`docs/PRIVACY_POLICY_DRAFT.md`) needs your review before it's
+   publishable, and the Resend credentials need supplying in Render before
+   password-reset/verification mail actually goes out.
 3. Journey screen features
 4. Analytics
 5. Enable the "HealthKit" capability on the Runner target in Xcode (Signing &

@@ -279,6 +279,10 @@ are optional and only ever collected later, to make the account recoverable.
 | POST | `/api/auth/link` | `{email?, phone?, password, username?}` | `200 {user}` |
 | POST | `/api/auth/register` | `{username, name, email, password}` | `201 {token, user}` |
 | POST | `/api/auth/login` | `{usernameOrEmail, password}` | `200 {token, user}` |
+| POST | `/api/auth/password-reset/request` | `{email}` | `204` (always, see below) |
+| POST | `/api/auth/password-reset/confirm` | `{token, password}` | `204` |
+| POST | `/api/auth/verify-email/resend` (auth) | - | `204` |
+| POST | `/api/auth/verify-email/confirm` | `{token}` | `204` |
 | POST | `/api/auth/logout` | - | `204` |
 | GET | `/api/me` | - | `200 {user}` |
 | PATCH | `/api/me` | `{name?, avatarColor?}` | `200 {user}` |
@@ -290,11 +294,14 @@ notifications, devices, step history, sessions) - not reversible, and not
 just this device's session. There is no separate confirmation step in the
 API itself; the client is responsible for confirming with the user first.
 
-`POST /api/auth/register`, `/login`, `/anonymous` and `/link` are rate
-limited per IP (`429 rate_limited` with `retryAfterSeconds` past the limit) -
-generous enough not to bother a real user, tight enough to blunt scripted
-abuse. Limits live in `backend/src/auth.js` (`REGISTER_RATE_LIMIT`, etc.),
-not repeated here since they're tuned from time to time.
+`POST /api/auth/register`, `/login`, `/anonymous`, `/link`, both
+`/password-reset/*` and both `/verify-email/*` endpoints are rate limited
+(`429 rate_limited` with `retryAfterSeconds` past the limit) - generous
+enough not to bother a real user, tight enough to blunt scripted abuse.
+Limits live in `backend/src/auth.js` (`REGISTER_RATE_LIMIT`, etc.), not
+repeated here since they're tuned from time to time. The unauthenticated
+endpoints are keyed per IP; `/verify-email/resend` is authenticated, so it's
+keyed per account instead.
 
 `POST /api/auth/anonymous` takes no credentials. It mints a readable handle
 (`swift_otter1234`), a display name and an avatar colour. The returned account
@@ -322,7 +329,37 @@ exists for recovering a claimed account on a new device. An **anonymous account
 can never be logged into** — it has no `password_hash`, and the endpoint
 returns the same `401` it gives an unknown user, so handles cannot be probed.
 
-`/api/me` returns `email`, `phone` (both nullable) and `isAnonymous`.
+`/api/me` returns `email`, `phone` (both nullable), `isAnonymous` and
+`emailVerified` (`true`/`false` when there's an email, `null` when there isn't
+one to verify).
+
+`POST /api/auth/password-reset/request` always returns `204`, whether or not
+`email` belongs to an account — same reasoning as `/login`'s uniform `401`:
+the response must never reveal whether an address is registered. If it
+matches a *claimed* account (anonymous accounts have no password to reset),
+a one-time token is emailed via `MAIL_PROVIDER` (`none` by default — see
+`backend/src/mail/`, same `none`/`log`/real-provider shape as
+`docs/PUSH_SETUP.md`'s push providers). The token expires after 1 hour.
+
+`POST /api/auth/password-reset/confirm` redeems that token: `400
+validation_error` if it's missing, unknown, already used, or expired.
+Success sets the new password and **deletes every existing session** for
+the account (a reset is treated as a signal the old password may be
+compromised), so the client must send the user through `/login` again — it
+does not receive a fresh token in the response.
+
+**Email verification is soft** — an unverified email doesn't block anything;
+there's no login gate to enforce it against (see the house rule above). It
+exists so the client can show a "verify your email" nudge and so a typo'd
+address is discoverable rather than silently wrong. `register` and `link`
+(when they set an email) each trigger one automatically. `POST
+/api/auth/verify-email/resend` sends another — `400 validation_error` if the
+account has no email at all, otherwise always `204`, including when already
+verified (no-op, not an error, since the client doesn't need to know that to
+decide whether to show the nudge). `POST /api/auth/verify-email/confirm
+{token}` redeems it — same `400 validation_error` shape as password-reset
+confirm for a missing/unknown/used/expired token. Tokens expire after 24h and
+use the same `MAIL_PROVIDER` as password reset.
 
 ### Habits
 | Method | Path | Body / Query | Response |

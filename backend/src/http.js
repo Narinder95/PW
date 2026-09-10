@@ -40,17 +40,37 @@ export class ApiError extends Error {
   }
 }
 
-export const CORS_HEADERS = {
-  // Dev-only: permissive so a Flutter web/desktop build can hit the API directly.
-  'Access-Control-Allow-Origin': '*',
+export const CORS_STATIC_HEADERS = {
   'Access-Control-Allow-Methods': 'GET, POST, PATCH, PUT, DELETE, OPTIONS',
   'Access-Control-Allow-Headers': 'Authorization, Content-Type, Accept, Last-Event-ID',
   'Access-Control-Expose-Headers': 'Content-Type',
   'Access-Control-Max-Age': '86400',
 };
 
-export function applyCors(res) {
-  for (const [k, v] of Object.entries(CORS_HEADERS)) res.setHeader(k, v);
+// Local Flutter web/desktop dev builds hit the API directly from a browser
+// origin; always allowed regardless of CORS_ALLOWED_ORIGINS so dev never
+// needs its own config.
+const DEV_ORIGIN_RE = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
+
+/** Native Android/iOS HTTP clients never send an Origin header and are
+ *  unaffected by any of this — CORS is a browser-enforced restriction, not a
+ *  server one. This only controls which *browser* origins may read the
+ *  response. */
+function isOriginAllowed(origin, env) {
+  if (!origin) return false;
+  if (DEV_ORIGIN_RE.test(origin)) return true;
+  const raw = env.CORS_ALLOWED_ORIGINS;
+  if (!raw) return false;
+  return raw.split(',').map((s) => s.trim()).includes(origin);
+}
+
+export function applyCors(res, req, env = process.env) {
+  res.setHeader('Vary', 'Origin');
+  const origin = req?.headers?.origin;
+  if (isOriginAllowed(origin, env)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
+  for (const [k, v] of Object.entries(CORS_STATIC_HEADERS)) res.setHeader(k, v);
 }
 
 export function sendJson(res, status, body, headers = {}) {

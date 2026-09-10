@@ -46,6 +46,9 @@ export function privateUser(row) {
     ...publicUser(row),
     email: row.email ?? null,
     phone: row.phone ?? null,
+    // null (not false) when there's no email at all - "unverified" implies
+    // something to verify, which isn't true for a phone-only or anonymous account.
+    emailVerified: row.email ? !!row.email_verified : null,
     // An anonymous account exists only on this device until it is claimed.
     isAnonymous: row.is_anonymous === undefined ? false : !!row.is_anonymous,
   };

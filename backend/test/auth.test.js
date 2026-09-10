@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { makeApp, makeUser, addHabit, befriend } from './helpers.js';
 import { hashPassword, verifyPassword, REGISTER_RATE_LIMIT, LOGIN_RATE_LIMIT } from '../src/auth.js';
+import { applyCors } from '../src/http.js';
 
 test('auth', async (t) => {
   const app = await makeApp();
@@ -208,8 +209,35 @@ test('auth', async (t) => {
   await t.test('CORS preflight is answered', async () => {
     const res = await fetch(`${app.base}/api/habits`, { method: 'OPTIONS' });
     assert.equal(res.status, 204);
-    assert.equal(res.headers.get('access-control-allow-origin'), '*');
     assert.ok(res.headers.get('access-control-allow-headers').includes('Authorization'));
+  });
+
+  await t.test('CORS reflects a local dev origin but not an arbitrary one', async () => {
+    const local = await fetch(`${app.base}/api/habits`, {
+      method: 'OPTIONS',
+      headers: { Origin: 'http://localhost:5000' },
+    });
+    assert.equal(local.headers.get('access-control-allow-origin'), 'http://localhost:5000');
+
+    const stranger = await fetch(`${app.base}/api/habits`, {
+      method: 'OPTIONS',
+      headers: { Origin: 'https://evil.example.com' },
+    });
+    assert.equal(stranger.headers.get('access-control-allow-origin'), null);
+  });
+
+  await t.test('CORS_ALLOWED_ORIGINS opts a specific non-localhost origin in', () => {
+    const headers = new Map();
+    const fakeRes = { setHeader: (k, v) => headers.set(k, v) };
+    const fakeReq = { headers: { origin: 'https://app.example.com' } };
+    applyCors(fakeRes, fakeReq, { CORS_ALLOWED_ORIGINS: 'https://app.example.com,https://other.example.com' });
+    assert.equal(headers.get('Access-Control-Allow-Origin'), 'https://app.example.com');
+
+    headers.clear();
+    applyCors(fakeRes, { headers: { origin: 'https://not-listed.example.com' } }, {
+      CORS_ALLOWED_ORIGINS: 'https://app.example.com',
+    });
+    assert.equal(headers.has('Access-Control-Allow-Origin'), false);
   });
 });
 

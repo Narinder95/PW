@@ -54,7 +54,7 @@ export function registerNotificationRoutes(router, ctx) {
 
   // SSE. `raw: true` -> this handler owns the response lifecycle.
   router.get('/api/notifications/stream', async ({ req, res, me }) => {
-    applyCors(res);
+    applyCors(res, req);
     res.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
       'Cache-Control': 'no-cache, no-transform',
