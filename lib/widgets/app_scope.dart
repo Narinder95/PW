@@ -45,7 +45,7 @@ class AppServices {
   final GlobalKey<NavigatorState> navigatorKey;
 
   /// Which bottom-nav tab `HomeScreen` is showing.
-  final ValueNotifier<int> tab = ValueNotifier<int>(kJournalTab);
+  final ValueNotifier<int> tab = ValueNotifier<int>(kJourneyTab);
 
   /// Set when the Friends tab should scroll its nudges section into view.
   ///

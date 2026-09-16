@@ -254,6 +254,10 @@ class _JournalScreenState extends State<JournalScreen> {
 
   // ---------------------------------------------------------------- greeting
   Widget _buildGreetingPanel(JournalTheme t) {
+    if (_loading && _habits.isEmpty) {
+      return _buildGreetingSkeleton(t);
+    }
+
     final user = _services?.auth.user;
     final name = user?.name.trim() ?? '';
     final done = _habits.where((h) => h.completedToday).length;
@@ -284,6 +288,27 @@ class _JournalScreenState extends State<JournalScreen> {
                     '${_habits.length == 1 ? 'habit' : 'habits'} done today.',
             style: t.subhead,
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGreetingSkeleton(JournalTheme t) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: t.surfaceBright,
+        borderRadius: BorderRadius.circular(JournalTheme.radiusCard),
+        border: Border.all(color: t.outline, width: 1),
+        boxShadow: t.shadow,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SkeletonBox(width: 160, height: t.headline.fontSize ?? 20),
+          const SizedBox(height: 6),
+          SkeletonBox(width: 200, height: t.subhead.fontSize ?? 14),
         ],
       ),
     );
