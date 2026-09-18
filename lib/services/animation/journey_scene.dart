@@ -177,6 +177,12 @@ class JourneyScene extends ChangeNotifier {
     world.petSleep();
   }
 
+  /// Triggers the yawning animation.
+  void yawn() {
+    _parkOnEmptyBank();
+    stepBank.yawnPlayed = false;
+  }
+
   /// Call whenever the device's step count for today changes. Only the
   /// increase since the last sync is deposited into the bank — a total that
   /// drops (a fresh day rolling over) just resets the baseline rather than

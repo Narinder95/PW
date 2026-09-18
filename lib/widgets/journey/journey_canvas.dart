@@ -148,6 +148,9 @@ class JourneyCanvasState extends State<JourneyCanvas>
 
   void startDrinkingWater() => _play('drinking_water', PetState.drinking_water);
 
+  /// Triggers the yawning animation.
+  void yawn() => _scene.yawn();
+
   /// Decodes the clip if this is its first use, then plays it. The pet keeps
   /// walking during the decode rather than freezing on a blank frame.
   Future<void> _play(String name, PetState state) async {

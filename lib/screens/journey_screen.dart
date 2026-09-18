@@ -43,6 +43,9 @@ class _JourneyScreenState extends State<JourneyScreen> {
   final Set<String> _loggingKeys = <String>{};
   DateTime? _lastSaveTime;
 
+  /// Timer to trigger yawning every 60 seconds when there are no active steps.
+  Timer? _yawnTimer;
+
   AppServices? _services;
   bool _bootstrapped = false;
 
@@ -53,6 +56,7 @@ class _JourneyScreenState extends State<JourneyScreen> {
     if (identical(_services, services)) return;
     _services = services;
     _loadHabits();
+    _updateYawnTimer();
 
     if (!_bootstrapped && services.auth.isSignedIn) {
       _bootstrapped = true;
@@ -64,6 +68,7 @@ class _JourneyScreenState extends State<JourneyScreen> {
   @override
   void dispose() {
     scrollController.dispose();
+    _yawnTimer?.cancel();
     super.dispose();
   }
 
@@ -104,6 +109,32 @@ class _JourneyScreenState extends State<JourneyScreen> {
 
   int _valueFor(String key) => _habitFor(key)?.progress ?? 0;
 
+  void _updateYawnTimer() {
+    final stepsToday = _valueFor('steps');
+    if (stepsToday == 0) {
+      _startYawnTimer();
+    } else {
+      _stopYawnTimer();
+    }
+  }
+
+  void _startYawnTimer() {
+    if (_yawnTimer != null) return;
+    _yawnTimer = Timer.periodic(
+      const Duration(seconds: 60),
+      (_) {
+        if (mounted) {
+          _journeyCanvasKey.currentState?.yawn();
+        }
+      },
+    );
+  }
+
+  void _stopYawnTimer() {
+    _yawnTimer?.cancel();
+    _yawnTimer = null;
+  }
+
   /// `POST /api/habits` (if not yet tracked) then `POST /api/habits/:id/log`.
   /// Mirrors `JournalScreen._activateTemplate` + `_logHabit` so a habit
   /// logged from here is the exact same server record Journal shows.
@@ -139,6 +170,10 @@ class _JourneyScreenState extends State<JourneyScreen> {
         _loggingKeys.remove(template.key);
         _lastSaveTime = DateTime.now();
       });
+      // Update yawn timer when steps change
+      if (template.key == 'steps') {
+        _updateYawnTimer();
+      }
     } on ApiException catch (error) {
       if (!mounted) return;
       setState(() => _loggingKeys.remove(template.key));
