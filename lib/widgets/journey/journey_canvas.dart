@@ -95,7 +95,12 @@ class JourneyCanvasState extends State<JourneyCanvas>
     setState(() {});
     _ticker.start();
 
-    await Future.wait([_library.load('walk'), _library.load('idle')]);
+    await Future.wait([
+      _library.load('walk'),
+      _library.load('idle'),
+      _library.load('yawning_1'),
+      _library.load('yawning_2'),
+    ]);
   }
 
   void _onTick(Duration elapsed) {
