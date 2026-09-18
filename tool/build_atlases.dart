@@ -70,10 +70,7 @@ const specs = <AnimSpec>[
   AnimSpec(
     'idle',
     [
-      'assets/journey/pet/idle/yawning/yawning_1',
-      'assets/journey/pet/idle/yawning/yawning_2',
-      'assets/journey/pet/idle/yawning/yawning_3',
-      'assets/journey/pet/idle/yawning/yawning_4',
+      'assets/journey/pet/idle/yawning',
     ],
     28,
     8,

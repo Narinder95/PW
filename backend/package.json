@@ -15,7 +15,5 @@
     "test-account": "node --env-file-if-exists=.env src/make_test_account.js",
     "purge": "node --env-file-if-exists=.env src/purge_test_users.js"
   },
-  "dependencies": {
-    "pg": "^8.23.0"
-  }
+  "dependencies": {}
 }
