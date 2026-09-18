@@ -218,8 +218,8 @@ class JourneyCanvasState extends State<JourneyCanvas>
     // The pet is always drawn centred on the ground line.
     final petCentre = Offset(box.size.width * 0.5, box.size.height * 0.7);
     if ((local - petCentre).distance <= box.size.width * 0.25) {
-      // If pet is yawning (idle, no steps), play yawning_2 on tap
-      if (_scene.mode == SceneMode.yawning) {
+      // If pet has no active steps (idle), play yawning_2 on tap
+      if (_scene.stepBank.remaining <= 0) {
         unawaited(playYawn('yawning_2'));
       } else {
         _world.celebrate();
