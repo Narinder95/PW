@@ -9,11 +9,11 @@ import '../widgets/app_scope.dart';
 import '../widgets/friends/state_panels.dart';
 import '../widgets/journey/journey_canvas.dart';
 
-/// The five [kHabitCatalog] entries the Journey tab's "LOG TODAY" panel
-/// offers, in display order. `Steps` is deliberately excluded: it already has
-/// its own logging surface on the Journal tab, and it drives the walking
-/// challenge above rather than being just another habit tile.
+/// The [kHabitCatalog] entries the Journey tab's "LOG TODAY" panel offers,
+/// in display order. `Steps` has its own manual logging card here and also
+/// drives the walking challenge above.
 const List<String> _kJourneyPanelKeys = <String>[
+  'steps',
   'water',
   'exercise',
   'sleep',
@@ -254,6 +254,18 @@ class _JourneyScreenState extends State<JourneyScreen> {
                             ),
                             child: Row(
                               children: [
+                                ActivityInputCard(
+                                  icon: '👟',
+                                  label: 'Steps',
+                                  unit: 'steps',
+                                  value: _valueFor('steps'),
+                                  onChanged: (value) {
+                                    unawaited(_logActivity(templateFor('steps')!, value));
+                                  },
+                                  presets: const [1000, 5000],
+                                  color: const Color(0xFF2E7D32),
+                                ),
+                                const SizedBox(width: 10),
                                 ActivityInputCard(
                                   icon: '💧',
                                   label: 'Water',
