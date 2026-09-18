@@ -46,6 +46,9 @@ class _JourneyScreenState extends State<JourneyScreen> {
   /// Timer to trigger yawning every 60 seconds when there are no active steps.
   Timer? _yawnTimer;
 
+  /// Tracks which yawning animation to play next (1 or 2).
+  int _nextYawnIndex = 1;
+
   AppServices? _services;
   bool _bootstrapped = false;
 
@@ -124,7 +127,10 @@ class _JourneyScreenState extends State<JourneyScreen> {
       const Duration(seconds: 60),
       (_) {
         if (mounted) {
-          _journeyCanvasKey.currentState?.yawn();
+          final yawnName = 'yawning_$_nextYawnIndex';
+          _journeyCanvasKey.currentState?.playYawn(yawnName);
+          // Toggle between 1 and 2
+          _nextYawnIndex = _nextYawnIndex == 1 ? 2 : 1;
         }
       },
     );
