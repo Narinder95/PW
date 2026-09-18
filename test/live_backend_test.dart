@@ -4,10 +4,8 @@
 // the server sends. This file proves the two actually agree. It is the only
 // test that would catch a contract drift between them.
 //
-// Requires the backend to be running:
-//     cd backend && node src/index.js
-// If it is not up, every test here is skipped rather than failed, so `flutter
-// test` still passes on a machine with no server.
+// Tests use the remote hosted backend (Render). If it is down, every test
+// here is skipped rather than failed, so `flutter test` still passes.
 import 'dart:ui' show Color;
 
 import 'package:flutter_test/flutter_test.dart';
@@ -22,7 +20,7 @@ import 'package:pw/services/api/api_config.dart';
 import 'package:pw/services/api/api_exception.dart';
 import 'package:pw/services/api/pw_api.dart';
 
-const String kBaseUrl = 'http://localhost:8080';
+const String kBaseUrl = 'https://habitpet-api.onrender.com';
 
 Future<bool> serverIsUp() async {
   try {
@@ -68,7 +66,7 @@ Future<bool> ensureServer() async {
   _serverUp ??= await serverIsUp();
   if (!_serverUp!) {
     markTestSkipped(
-      'backend not running at $kBaseUrl — start it: cd backend && node src/index.js',
+      'backend not responding at $kBaseUrl',
     );
   }
   return _serverUp!;

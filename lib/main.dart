@@ -29,18 +29,9 @@ Future<void> main() async {
   // see docs/PUSH_SETUP.md.
   await Firebase.initializeApp();
 
-  // Pick up a persisted base-URL override before the first request is made,
-  // so a QA build pointed at staging never briefly talks to localhost.
+  // Pick up a persisted base-URL override before the first request is made.
   final config = ApiConfig();
   await config.load();
-
-  // With no explicit override, find out which host actually answers. On a
-  // physical Android handset the emulator-only `10.0.2.2` default just fails,
-  // so we probe `localhost` first (what `adb reverse tcp:8080 tcp:8080`
-  // exposes) and fall back to the emulator alias. Bounded to ~2.4s worst case
-  // and it never throws, so a totally offline start still reaches the UI and
-  // shows the normal retry panel.
-  await config.autoDetect();
 
   runApp(PwApp(config: config));
 }
@@ -204,13 +195,6 @@ class _AccountSetupFailedState extends State<_AccountSetupFailed> {
 
   Future<void> _retry() async {
     setState(() => _retrying = true);
-    final config = AppScope.of(context).client.config;
-    // Re-probe candidate hosts: the very first autoDetect() (in main()) may
-    // have run before a physical device's adb-reverse tunnel was even up, and
-    // this is the only retry path a freshly-installed app has. A no-op when
-    // the user already set an explicit override.
-    if (!config.hasOverride) await config.autoDetect();
-    if (!mounted) return;
     await AppScope.of(context).auth.ensureAccount();
     if (!mounted) return;
     setState(() => _retrying = false);

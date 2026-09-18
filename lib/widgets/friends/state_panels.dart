@@ -375,16 +375,7 @@ class ErrorPanel extends StatelessWidget {
             Row(
               children: [
                 ElevatedButton.icon(
-                  onPressed: () async {
-                    // A network failure this deep may mean the host detected
-                    // at launch has stopped answering (tunnel dropped, phone
-                    // moved networks); re-probe before trying again rather
-                    // than repeating the same dead request.
-                    if (isNetwork && !services.client.config.hasOverride) {
-                      await services.client.config.autoDetect();
-                    }
-                    onRetry();
-                  },
+                  onPressed: onRetry,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: t.action,
                     foregroundColor: t.onAccent(t.action),
@@ -449,8 +440,7 @@ Future<void> showChangeServerDialog(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'The app talks to this base URL. An Android emulator reaches the '
-            'host machine at 10.0.2.2.',
+            'The app talks to this base URL. Leave blank to use the default.',
             style: TextStyle(fontSize: 13, color: t.textSecondary),
           ),
           const SizedBox(height: 14),
@@ -461,7 +451,7 @@ Future<void> showChangeServerDialog(
             style: TextStyle(color: t.textPrimary),
             decoration: InputDecoration(
               labelText: 'Base URL',
-              hintText: 'http://localhost:8080',
+              hintText: 'https://habitpet-api.onrender.com',
               labelStyle: TextStyle(color: t.textSecondary),
               hintStyle: TextStyle(color: t.textMuted),
               border: OutlineInputBorder(
@@ -493,12 +483,7 @@ Future<void> showChangeServerDialog(
   controller.dispose();
   if (result == null) return;
 
-  final config = services.client.config;
-  await config.setBaseUrl(result);
-  // An empty save clears the override rather than setting one; without a
-  // fresh probe here the config would silently fall back to the stale
-  // platform default (10.0.2.2 on Android) instead of re-detecting.
-  if (!config.hasOverride) await config.autoDetect();
+  await services.client.config.setBaseUrl(result);
   onChanged();
 }
 

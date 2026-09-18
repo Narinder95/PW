@@ -71,30 +71,25 @@ flutter run
 
 ## Backend
 
-The app talks to a real API. Start it before running the app:
+The app talks to a hosted API on Render (`https://habitpet-api.onrender.com`).
+No local backend is required for development. Demo logins are in `backend/README.md`.
 
-```bash
-cd backend && node src/seed.js && node src/index.js   # :8080
-```
-
-`docs/API_CONTRACT.md` is the authoritative spec — **change it before changing
-either side.** Demo logins are in `backend/README.md`.
-
-On a **physical** Android device, `10.0.2.2` is an emulator-only address: use
-`adb reverse tcp:8080 tcp:8080` plus a `http://localhost:8080` override, or the
-machine's LAN IP.
+To modify the API contract: `docs/API_CONTRACT.md` is the authoritative spec —
+**change it before changing either side.**
 
 ## Testing
 
 ```bash
 flutter test          # 54 tests
-cd backend && npm test # 205 tests
+flutter analyze       # Must stay at 0 errors, 0 warnings
 ```
 
-`flutter analyze` must stay at **0 errors, 0 warnings**.
+The app integration tests exercise the real client against the remote hosted server.
 
-`test/live_backend_test.dart` exercises the real client against the real server
-and skips itself when no server is running.
+Backend tests (if modifying the backend):
+```bash
+cd backend && npm test # 205 tests
+```
 
 ## House rules
 
