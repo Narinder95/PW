@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
+import '../models/json.dart';
 import '../models/walking_challenge.dart';
 import 'api/api_exception.dart';
 import 'api/pw_api.dart';
@@ -21,11 +24,26 @@ class WalkingChallengeService extends ChangeNotifier {
     this.stepSource = const StubStepSource(),
   });
 
+  /// Live-tick sensor updates are batched into a `POST /api/steps/sync` no
+  /// more than this often, so a burst of steps costs one API hit rather than
+  /// one per tick.
+  static const Duration _liveSyncDebounce = Duration(seconds: 20);
+
+  /// ...unless the running total has jumped by at least this many steps
+  /// since the last sync, in which case it goes out immediately instead of
+  /// waiting out the debounce — otherwise continuous walking (a tick every
+  /// few steps) would keep resetting the timer and never actually sync.
+  static const int _liveSyncStepFloor = 100;
+
   WalkingChallenge? _challenge;
   bool _isLoading = false;
   bool _permissionDenied = false;
   ApiException? _lastError;
   bool _disposed = false;
+
+  StreamSubscription<int>? _liveSub;
+  Timer? _liveSyncTimer;
+  int? _lastSyncedTodaySteps;
 
   WalkingChallenge? get challenge => _challenge;
   bool get isLoading => _isLoading;
@@ -96,8 +114,112 @@ class WalkingChallengeService extends ChangeNotifier {
     }
   }
 
+  /// Reflects a manually-logged Steps habit in the cached challenge the
+  /// instant it's saved, rather than leaving the Journey card showing a
+  /// stale [WalkingChallenge.todaySteps] until the next [refresh] /
+  /// [syncFromDevice]. The habit log itself already persisted server-side
+  /// (`upsertDailySteps`, same MAX-of-existing rule as a device sync), so
+  /// this only needs to update the local cache and then reconcile the
+  /// derived fields (status/level/streak) from the server right after.
+  ///
+  /// A no-op if nothing has been loaded into [challenge] yet — there's
+  /// nothing to bump, and the next [refresh] will pick the value up anyway.
+  Future<void> applyManualSteps(int steps) async {
+    if (_disposed) return;
+    final current = _challenge;
+    if (current == null) return;
+
+    if (steps > current.todaySteps) {
+      _challenge = current.copyWith(todaySteps: steps);
+      _notify();
+    }
+
+    try {
+      _challenge = await api.getChallenge();
+      _lastError = null;
+    } on ApiException catch (error) {
+      _lastError = error;
+    }
+    _notify();
+  }
+
+  /// Starts listening to the device's live step sensor (when [stepSource]
+  /// offers one) so the Journey card moves the instant a step is counted,
+  /// instead of waiting for the next poll. Safe to call repeatedly — a
+  /// second call while already listening is a no-op. Call [stopLiveTracking]
+  /// when the Journey tab is no longer visible.
+  void startLiveTracking() {
+    if (_disposed || _liveSub != null) return;
+    final stream = stepSource.liveTodaySteps();
+    if (stream == null) return;
+    _liveSub = stream.listen(_onLiveTick, onError: (_) {});
+  }
+
+  /// Stops the live subscription and flushes any step count that hasn't
+  /// made it to the server yet, so a step taken right before backgrounding
+  /// isn't lost to a debounce timer that never gets to fire.
+  Future<void> stopLiveTracking() async {
+    _liveSyncTimer?.cancel();
+    _liveSyncTimer = null;
+    final sub = _liveSub;
+    _liveSub = null;
+    await sub?.cancel();
+
+    final steps = _challenge?.todaySteps;
+    if (steps != null && steps != _lastSyncedTodaySteps) {
+      await _pushLiveSteps(steps);
+    }
+  }
+
+  void _onLiveTick(int todaySteps) {
+    if (_disposed) return;
+    final current = _challenge;
+    if (current == null) {
+      _challenge = WalkingChallenge(todaySteps: todaySteps);
+      _notify();
+    } else if (todaySteps > current.todaySteps) {
+      _challenge = current.copyWith(todaySteps: todaySteps);
+      _notify();
+    }
+    _scheduleBackendSync(todaySteps);
+  }
+
+  void _scheduleBackendSync(int todaySteps) {
+    final delta = todaySteps - (_lastSyncedTodaySteps ?? 0);
+    if (delta >= _liveSyncStepFloor) {
+      _liveSyncTimer?.cancel();
+      _liveSyncTimer = null;
+      unawaited(_pushLiveSteps(todaySteps));
+      return;
+    }
+    _liveSyncTimer?.cancel();
+    _liveSyncTimer = Timer(_liveSyncDebounce, () => unawaited(_pushLiveSteps(todaySteps)));
+  }
+
+  /// The actual `POST /api/steps/sync` for a live-tracked value. Errors are
+  /// swallowed into [lastError] rather than thrown — a dropped background
+  /// sync must not crash the live-tracking loop; the next tick (or the next
+  /// [syncFromDevice]) will simply try again with a larger total.
+  Future<void> _pushLiveSteps(int todaySteps) async {
+    if (_disposed) return;
+    _lastSyncedTodaySteps = todaySteps;
+    try {
+      final today = asDateOnly(DateTime.now());
+      _challenge = await api.syncSteps({today: todaySteps});
+      _lastError = null;
+      _notify();
+    } on ApiException catch (error) {
+      _lastError = error;
+    }
+  }
+
   /// Drops the cache. Call on sign-out, mirroring `FriendsRepository.clear()`.
   void clear() {
+    _liveSyncTimer?.cancel();
+    _liveSyncTimer = null;
+    unawaited(_liveSub?.cancel());
+    _liveSub = null;
+    _lastSyncedTodaySteps = null;
     _challenge = null;
     _permissionDenied = false;
     _lastError = null;
@@ -112,6 +234,8 @@ class WalkingChallengeService extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _liveSyncTimer?.cancel();
+    unawaited(_liveSub?.cancel());
     super.dispose();
   }
 }

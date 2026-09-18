@@ -28,6 +28,16 @@ abstract class StepSource {
   /// simply absent from the map, not a zero entry — `WalkingChallengeService`
   /// only syncs days it actually has a reading for.
   Future<Map<String, int>> readDailySteps({int days = 8});
+
+  /// A live stream of "today so far" step totals, firing on every sensor
+  /// update while listened to — for reflecting steps the instant the device
+  /// counts them, rather than waiting for the next polled [readDailySteps].
+  ///
+  /// Returns null when this source has no way to push updates as they
+  /// happen (e.g. Health Connect/HealthKit, which only expose polled
+  /// historical totals). Callers should treat null as "not supported" and
+  /// keep relying on polling.
+  Stream<int>? liveTodaySteps() => null;
 }
 
 /// Reads real step data via `package:health` (Health Connect / HealthKit).
@@ -137,7 +147,37 @@ class NativeStepCounterSource extends StepSource {
     return out;
   }
 
-  Future<void> _recordReading(int rawCounter) async {
+  /// Foreground-only: the sensor stream stops delivering events once the app
+  /// is suspended, same limitation as the rest of this class (see class doc).
+  /// A subscriber sees today's running total the instant the OS reports a
+  /// new step, rather than only on the next polled [readDailySteps].
+  @override
+  Stream<int> liveTodaySteps() {
+    late final StreamController<int> controller;
+    StreamSubscription<StepCount>? sub;
+
+    controller = StreamController<int>.broadcast(
+      onListen: () {
+        sub = Pedometer.stepCountStream.listen(
+          (event) async {
+            try {
+              final today = await _recordReading(event.steps);
+              if (!controller.isClosed) controller.add(today);
+            } catch (_) {
+              // Drop a bad reading; the next tick self-corrects.
+            }
+          },
+          onError: (_) {},
+        );
+      },
+      onCancel: () async => sub?.cancel(),
+    );
+    return controller.stream;
+  }
+
+  /// Records a raw cumulative sensor reading and returns today's running
+  /// total after applying it.
+  Future<int> _recordReading(int rawCounter) async {
     final prefs = await SharedPreferences.getInstance();
     final today = asDateOnly(DateTime.now());
     final baselineDate = prefs.getString(_baselineDateKey);
@@ -148,7 +188,7 @@ class NativeStepCounterSource extends StepSource {
       // First-ever reading: nothing to diff against yet.
       await prefs.setString(_baselineDateKey, today);
       await prefs.setInt(_baselineCounterKey, rawCounter);
-      return;
+      return log[today] ?? 0;
     }
 
     if (baselineDate == today) {
@@ -163,6 +203,7 @@ class NativeStepCounterSource extends StepSource {
     }
 
     await _saveLog(prefs, log);
+    return log[today] ?? 0;
   }
 
   Future<Map<String, int>> _loadLog({SharedPreferences? prefs}) async {
@@ -212,6 +253,12 @@ class CompositeStepSource extends StepSource {
     if (primaryData.isNotEmpty) return primaryData;
     return fallback.readDailySteps(days: days);
   }
+
+  /// Health Connect/HealthKit (the usual [primary]) has no live push API, so
+  /// this is [fallback]'s stream in practice — the raw sensor is the only
+  /// one of the two that can report "instantly."
+  @override
+  Stream<int>? liveTodaySteps() => primary.liveTodaySteps() ?? fallback.liveTodaySteps();
 }
 
 /// The default [StepSource]: no platform plugin calls, no data.

@@ -129,6 +129,20 @@ class WalkingChallenge {
     this.history = const <StepDay>[],
   });
 
+  /// Only [todaySteps] is ever patched client-side (an optimistic bump from
+  /// a manual log or a live sensor tick, ahead of the next server round
+  /// trip) — every other field is server-computed and must not be guessed.
+  WalkingChallenge copyWith({int? todaySteps}) => WalkingChallenge(
+        level: level,
+        streakDays: streakDays,
+        target: target,
+        nextLevel: nextLevel,
+        daysToNextLevel: daysToNextLevel,
+        todaySteps: todaySteps ?? this.todaySteps,
+        todayStatus: todayStatus,
+        history: history,
+      );
+
   /// Whether the most recent committed day (or today, live) needs the user's
   /// attention — a frozen streak or a demotion just happened.
   bool get hasWarning =>

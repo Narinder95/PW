@@ -28,7 +28,7 @@ class JourneyScreen extends StatefulWidget {
   State<JourneyScreen> createState() => _JourneyScreenState();
 }
 
-class _JourneyScreenState extends State<JourneyScreen> {
+class _JourneyScreenState extends State<JourneyScreen> with WidgetsBindingObserver {
   final scrollController = ScrollController();
   final GlobalKey<JourneyCanvasState> _journeyCanvasKey = GlobalKey();
 
@@ -53,6 +53,12 @@ class _JourneyScreenState extends State<JourneyScreen> {
   bool _bootstrapped = false;
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     final services = AppScope.of(context);
@@ -63,15 +69,36 @@ class _JourneyScreenState extends State<JourneyScreen> {
 
     if (!_bootstrapped && services.auth.isSignedIn) {
       _bootstrapped = true;
-      WidgetsBinding.instance
-          .addPostFrameCallback((_) => services.walkingChallenge.syncFromDevice());
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        services.walkingChallenge.syncFromDevice();
+        // Live device steps from here on, so the pet/step count on this
+        // screen moves the instant the sensor reports a step, rather than
+        // only on the next poll.
+        services.walkingChallenge.startLiveTracking();
+      });
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final services = _services;
+    if (services == null || !services.auth.isSignedIn) return;
+    if (state == AppLifecycleState.resumed) {
+      services.walkingChallenge.startLiveTracking();
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      // Flush immediately rather than leaving a step count sitting behind a
+      // debounce timer that may never get to fire while backgrounded.
+      unawaited(services.walkingChallenge.stopLiveTracking());
     }
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     scrollController.dispose();
     _yawnTimer?.cancel();
+    unawaited(_services?.walkingChallenge.stopLiveTracking());
     super.dispose();
   }
 
@@ -176,9 +203,12 @@ class _JourneyScreenState extends State<JourneyScreen> {
         _loggingKeys.remove(template.key);
         _lastSaveTime = DateTime.now();
       });
-      // Update yawn timer when steps change
+      // Update yawn timer when steps change, and reflect the new total in
+      // the Journey card immediately rather than leaving it stale until the
+      // next device sync — the habit log already persisted this server-side.
       if (template.key == 'steps') {
         _updateYawnTimer();
+        unawaited(services.walkingChallenge.applyManualSteps(progress));
       }
     } on ApiException catch (error) {
       if (!mounted) return;
