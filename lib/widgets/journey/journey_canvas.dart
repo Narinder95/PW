@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
@@ -211,7 +213,12 @@ class JourneyCanvasState extends State<JourneyCanvas>
     // The pet is always drawn centred on the ground line.
     final petCentre = Offset(box.size.width * 0.5, box.size.height * 0.7);
     if ((local - petCentre).distance <= box.size.width * 0.25) {
-      _world.celebrate();
+      // If pet is yawning (idle, no steps), play yawning_2 on tap
+      if (_scene.mode == SceneMode.yawning) {
+        unawaited(playYawn('yawning_2'));
+      } else {
+        _world.celebrate();
+      }
     }
   }
 }
