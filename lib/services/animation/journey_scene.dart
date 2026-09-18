@@ -174,6 +174,7 @@ class JourneyScene extends ChangeNotifier {
   void _parkOnEmptyBank() {
     mode = SceneMode.yawning;
     _clipElapsed = 0;
+    scrollDistance = 0;
     world.petSleep();
   }
 
@@ -204,6 +205,7 @@ class JourneyScene extends ChangeNotifier {
     mode = SceneMode.activity;
     _activityName = name;
     _clipElapsed = 0;
+    scrollDistance = 0;
     world.pet.state = state;
     world.pet.velocity.x = 0;
   }

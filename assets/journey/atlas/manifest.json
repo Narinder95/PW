@@ -24,6 +24,23 @@
       "frameCount": 28,
       "cols": 4,
       "rows": 7,
+      "frameWidth": 447,
+      "frameHeight": 290,
+      "padding": 2,
+      "fps": 8,
+      "sourceWidth": 1110,
+      "sourceHeight": 720,
+      "cropX": 0,
+      "cropY": 0,
+      "cropWidth": 1110,
+      "cropHeight": 720
+    },
+    "yawning_1": {
+      "name": "yawning_1",
+      "sheet": "yawning_1.png",
+      "frameCount": 28,
+      "cols": 4,
+      "rows": 7,
       "frameWidth": 424,
       "frameHeight": 290,
       "padding": 2,
@@ -35,9 +52,9 @@
       "cropWidth": 981,
       "cropHeight": 671
     },
-    "yawning_1": {
-      "name": "yawning_1",
-      "sheet": "yawning_1.png",
+    "yawning_2": {
+      "name": "yawning_2",
+      "sheet": "yawning_2.png",
       "frameCount": 28,
       "cols": 4,
       "rows": 7,
@@ -51,23 +68,6 @@
       "cropY": 0,
       "cropWidth": 1110,
       "cropHeight": 720
-    },
-    "yawning_2": {
-      "name": "yawning_2",
-      "sheet": "yawning_2.png",
-      "frameCount": 28,
-      "cols": 4,
-      "rows": 7,
-      "frameWidth": 424,
-      "frameHeight": 290,
-      "padding": 2,
-      "fps": 8,
-      "sourceWidth": 1072,
-      "sourceHeight": 694,
-      "cropX": 0,
-      "cropY": 0,
-      "cropWidth": 981,
-      "cropHeight": 671
     },
     "exercise": {
       "name": "exercise",
