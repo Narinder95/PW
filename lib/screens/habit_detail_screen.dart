@@ -322,11 +322,17 @@ class _HabitDetailScreenState extends State<HabitDetailScreen> {
     progressController.dispose();
     if (confirmed != true || !mounted) return;
 
-    await widget.onLog?.call(parsed < 0 ? 0 : parsed);
+    // Pop this page *before* logging, not after: `onLog` can push a
+    // full-screen streak celebration (see `JournalScreen._logHabit`) on top
+    // of the Journal screen this page was reached from. Popping afterward
+    // would pop whatever is then on top of the navigator — the celebration
+    // screen just pushed, not this page — corrupting the stack and tripping
+    // a framework assertion (`_dependents.isEmpty`) instead of showing it.
     // The habit list this page was pushed from now has the fresh value; this
     // page's own `habit` copy is a snapshot and won't update in place, so
     // returning to it is simpler and more honest than showing stale numbers.
-    if (mounted) Navigator.of(context).pop();
+    Navigator.of(context).pop();
+    await widget.onLog?.call(parsed < 0 ? 0 : parsed);
   }
 
   // ------------------------------------------------------------------ chart
